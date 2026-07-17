@@ -783,7 +783,7 @@ $('exportBtn').onclick = async ()=>{
     let last=performance.now();
     const drawFrame=()=>{
       const now=performance.now(), dt=Math.min(.05,(now-last)/1000); last=now;
-      drawBaseComposite(ctx,cv.width,cv.height);
+      drawBaseComposite(ctx,cv.width,cv.height,true);
       plugins.forEach(p=>{
         if(!p.enabled || !p.draw || p.type==='base' || p.type==='transform') return;
         const keep=p._parts; p._parts=p._exportParts;   // تبديل مؤقت للجزيئات
@@ -881,10 +881,10 @@ const plugins = [
     desc:'بريسِتات سينمائية جاهزة + تحكم يدوي كامل بالألوان',
     enabled:false,
     params:{
-      preset:{label:'البريسِت', type:'select', value:'normal',
+      preset:{label:'البريسِت', type:'select', value:'cinema',
         options:[
-          ['normal','عادي'],
           ['cinema','سينمائي (Teal & Orange)'],
+          ['normal','عادي'],
           ['vivid','ألوان نابضة (Vivid)'],
           ['warm','دافئ (غروب)'],
           ['cold','بارد (شتوي)'],
@@ -996,12 +996,45 @@ function drawBgRemoved(ctx,w,h){
   const bg=p.params.bg.value;
   if(bg!=='transparent'){ ctx.fillStyle=bgColors[bg]||'#000'; ctx.fillRect(0,0,w,h); }
   else ctx.clearRect(0,0,w,h);
-  ctx.filter=_colorFilter;      // الفلتر على الشخص فقط — لون الكروما يبقى نقياً
+  if(CTX_FILTER_OK) ctx.filter=_colorFilter;      // الفلتر على الشخص فقط — لون الكروما يبقى نقياً
   ctx.drawImage(segTmp,0,0);
-  ctx.filter='none';
+  if(CTX_FILTER_OK) ctx.filter='none';
 }
 
 /* ===== 🎨 محرك تصحيح الألوان ===== */
+// سفاري القديم على الآيفون لا يدعم ctx.filter — نكشف الدعم ونستخدم مساراً بديلاً
+const CTX_FILTER_OK=(()=>{try{
+  const c=document.createElement('canvas').getContext('2d');
+  if(typeof c.filter!=='string') return false;
+  c.filter='grayscale(1)';
+  return c.filter==='grayscale(1)';
+}catch(e){return false;}})();
+
+// بديل الآيفون: تقريب الفلاتر بعمليات المزج (يُستخدم في التصدير فقط — المعاينة عبر CSS)
+function applyFilterApprox(ctx,w,h){
+  const c=colPlugin(); if(!c) return;
+  const p=c.params, pre=colorPresets[p.preset.value]||colorPresets.normal, f=pre.filter;
+  let sat=p.saturation.value/100, bri=p.brightness.value/100, con=p.contrast.value/100, gray=0, sep=0;
+  const m=(re)=>{const r=f.match(re); return r?+r[1]:null;};
+  const g=m(/grayscale\(([\d.]+)\)/); if(g!=null) gray=g;
+  const s2=m(/saturate\(([\d.]+)\)/);  if(s2!=null) sat*=s2;
+  const b2=m(/brightness\(([\d.]+)\)/);if(b2!=null) bri*=b2;
+  const c2=m(/contrast\(([\d.]+)\)/);  if(c2!=null) con*=c2;
+  const sp=m(/sepia\(([\d.]+)\)/);     if(sp!=null) sep=sp;
+  ctx.save();
+  if(gray>0 || sat<1){
+    ctx.globalCompositeOperation='saturation';
+    ctx.globalAlpha=Math.min(1, gray>0?gray:1-sat);
+    ctx.fillStyle='#808080'; ctx.fillRect(0,0,w,h);
+  }
+  if(sep>0){ ctx.globalCompositeOperation='color'; ctx.globalAlpha=Math.min(1,sep*.9); ctx.fillStyle='#8a6a45'; ctx.fillRect(0,0,w,h); }
+  ctx.globalAlpha=1;
+  if(con>1.02){ ctx.globalCompositeOperation='overlay'; ctx.globalAlpha=Math.min(1,(con-1)*1.4); ctx.drawImage(ctx.canvas,0,0,w,h); }
+  if(bri>1.02){ ctx.globalCompositeOperation='screen'; ctx.globalAlpha=Math.min(1,bri-1); ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h); }
+  if(bri<0.98){ ctx.globalCompositeOperation='multiply'; ctx.globalAlpha=Math.min(1,(1-bri)*1.2); ctx.fillStyle='#000'; ctx.fillRect(0,0,w,h); }
+  ctx.restore();
+}
+
 const colorPresets={
   normal :{filter:'', tints:[]},
   cinema :{filter:'contrast(1.12) saturate(1.22)', tints:[['#0e7a8a','soft-light',.35],['#ff8c3b','soft-light',.22]]},
@@ -1077,7 +1110,7 @@ function drawPhoneFrame(ctx,w,h){
 
 /* ===== دالة التركيب الموحدة (المعاينة + التصدير) =====
    ترسم: خلفية سوداء ← اهتزاز الزلزال ← الفيديو (أو الفيديو بلا خلفية) ← إطار الموبايل */
-function drawBaseComposite(ctx,w,h){
+function drawBaseComposite(ctx,w,h,forExport){
   const base = plugins.find(p=>p.type==='base' && p.enabled);
   const qk   = plugins.find(p=>p.id==='quakeFrame' && p.enabled);
   const quakeOn = qk && qk.isActive(timelineTime);
@@ -1093,11 +1126,12 @@ function drawBaseComposite(ctx,w,h){
   }
   if(base){ segTick(); drawBgRemoved(ctx,w,h); }
   else{
-    ctx.filter=_colorFilter;
+    if(CTX_FILTER_OK) ctx.filter=_colorFilter;
     ctx.drawImage(player,0,0,w,h);
-    ctx.filter='none';
+    if(CTX_FILTER_OK) ctx.filter='none';
   }
   ctx.restore();
+  if(!CTX_FILTER_OK && forExport) applyFilterApprox(ctx,w,h);  // بديل الآيفون في التصدير
   drawColorGrade(ctx,w,h);
   if(quakeOn) drawPhoneFrame(ctx,w,h);
 }
@@ -1198,9 +1232,12 @@ function fxLoop(now){
   if(fx.width>0 && srcDuration>0){
     if(needsCanvasBase()){
       player.style.opacity='0';
-      drawBaseComposite(fxCtx,fx.width,fx.height);
+      drawBaseComposite(fxCtx,fx.width,fx.height,false);
+      // آيفون: الفلتر عبر CSS على كانفس المعاينة (نفس النتيجة بصرياً)
+      fx.style.filter = (!CTX_FILTER_OK && colPlugin() && _colorFilter!=='none') ? _colorFilter : '';
     }else{
       player.style.opacity='1';
+      fx.style.filter='';
       fxCtx.clearRect(0,0,fx.width,fx.height);
     }
     plugins.forEach(pl=>{ if(pl.enabled && pl.draw && pl.type!=='base' && pl.type!=='transform') pl.draw(fxCtx,fx.width,fx.height,dt); });
