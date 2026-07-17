@@ -862,6 +862,19 @@ const plugins = [
     onToggle(){ if(this.enabled) ensureSegModel(); },
   },
   {
+    id:'glitchFx',
+    type:'post',                 // بلاجن لاحق: يشوّه الإطار النهائي بعد كل الطبقات
+    name:'📺 جليتش سايبر',
+    desc:'تشويش رقمي: انقسام ألوان RGB وشرائح متزحزحة وخطوط شاشة — في نافذة زمنية تحددها',
+    enabled:false,
+    params:{
+      start:{label:'ثانية البداية', min:0, max:60, value:0},
+      end:{label:'ثانية النهاية', min:0, max:120, value:120},
+      power:{label:'قوة التشويش', min:5, max:60, value:25},
+    },
+    isActive(t){ return t>=this.params.start.value && t<=this.params.end.value; },
+  },
+  {
     id:'quakeFrame',
     type:'transform',            // بلاجن تحويل: يهزّ الصورة ويرسم إطاراً في نافذة زمنية
     name:'📱 فريم موبايل + زلزال',
@@ -1080,6 +1093,68 @@ function drawColorGrade(ctx,w,h){
   }
 }
 
+/* ===== 📺 محرك الجلتش ===== */
+const gTmp=document.createElement('canvas'), gCtx=gTmp.getContext('2d');
+const gTint=document.createElement('canvas'), gTintCtx=gTint.getContext('2d');
+function drawGlitch(ctx,w,h){
+  const gl=plugins.find(p=>p.id==='glitchFx' && p.enabled);
+  if(!gl || !gl.isActive(timelineTime)) return;
+  const P=gl.params.power.value, sc=Math.max(.5, w/640);
+  // نبضات: التشويش يجي على دفعات مش مستمر — أقرب للجلتش الحقيقي
+  const burst = Math.random()<0.65 ? 1 : (Math.random()<0.5?0.25:0);
+  if(burst===0) { drawScanlines(ctx,w,h,.05); return; }
+  const amp=P*sc*burst;
+
+  // لقطة من الإطار الحالي
+  gTmp.width=w; gTmp.height=h;
+  gCtx.drawImage(ctx.canvas,0,0);
+
+  // 1) شرائح أفقية متزحزحة
+  const slices = 2+Math.floor(Math.random()*(2+P/10));
+  for(let i=0;i<slices;i++){
+    const sy=Math.random()*h, sh=(4+Math.random()*36)*sc;
+    const dx=(Math.random()-.5)*amp*2;
+    ctx.drawImage(gTmp, 0,sy,w,sh, dx,sy,w,sh);
+  }
+
+  // 2) انقسام ألوان RGB (قناة حمراء وقناة سماوية بإزاحتين متعاكستين)
+  if(Math.random()<0.8){
+    const off=Math.max(1, amp*0.35);
+    gTint.width=w; gTint.height=h;
+    for(const [color,dx] of [['#ff0044',off],['#00ffee',-off]]){
+      gTintCtx.globalCompositeOperation='source-over';
+      gTintCtx.drawImage(gTmp,0,0);
+      gTintCtx.globalCompositeOperation='multiply';
+      gTintCtx.fillStyle=color; gTintCtx.fillRect(0,0,w,h);
+      ctx.save();
+      ctx.globalCompositeOperation='screen'; ctx.globalAlpha=.5;
+      ctx.drawImage(gTint,dx,0);
+      ctx.restore();
+    }
+  }
+
+  // 3) بلوكات نويز ملونة صغيرة
+  if(Math.random()<0.4){
+    const n=1+Math.floor(Math.random()*4);
+    for(let i=0;i<n;i++){
+      ctx.save();
+      ctx.globalAlpha=.25+Math.random()*.3;
+      ctx.fillStyle=['#ff0044','#00ffee','#ffffff','#c0ff00'][Math.floor(Math.random()*4)];
+      ctx.fillRect(Math.random()*w, Math.random()*h, (10+Math.random()*90)*sc, (2+Math.random()*10)*sc);
+      ctx.restore();
+    }
+  }
+
+  drawScanlines(ctx,w,h,.09);
+}
+function drawScanlines(ctx,w,h,alpha){
+  ctx.save();
+  ctx.globalAlpha=alpha; ctx.fillStyle='#000';
+  const step=Math.max(3, Math.round(h/160));
+  for(let y=0;y<h;y+=step*2) ctx.fillRect(0,y,w,step);
+  ctx.restore();
+}
+
 /* ===== 📱 إطار الموبايل ===== */
 function drawPhoneFrame(ctx,w,h){
   // منطقة 9:16 في المنتصف
@@ -1134,9 +1209,10 @@ function drawBaseComposite(ctx,w,h,forExport){
   if(!CTX_FILTER_OK && forExport) applyFilterApprox(ctx,w,h);  // بديل الآيفون في التصدير
   drawColorGrade(ctx,w,h);
   if(quakeOn) drawPhoneFrame(ctx,w,h);
+  drawGlitch(ctx,w,h);          // الجلتش آخر طبقة — يشوّه كل ما تحته
 }
 // هل نحتاج الرسم عبر الكانفس بدل عرض الفيديو مباشرة؟
-const needsCanvasBase = ()=> plugins.some(p=>p.enabled && (p.type==='base'||p.type==='transform'||p.type==='color'));
+const needsCanvasBase = ()=> plugins.some(p=>p.enabled && (p.type==='base'||p.type==='transform'||p.type==='color'||p.type==='post'));
 
 function drawHeart(ctx,x,y,s,color,rot){
   ctx.save();
