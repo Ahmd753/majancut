@@ -208,6 +208,7 @@
 <header>
   <h1>ماجان<b>كَت</b> ✂️</h1>
   <button class="btn" id="importBtn">📂 استيراد فيديو</button>
+  <button class="btn" id="newBtn" title="مشروع جديد — مسح الكل">🆕</button>
   <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi,.wmv,.flv,.mpg,.mpeg,.3gp,.3g2,.ts,.m2ts,.mts,.vob,.ogv,.divx,.asf,.rm,.rmvb" hidden>
   <input type="url" id="urlInput" placeholder="الصق رابط الفيديو هنا…" dir="ltr"
     style="background:var(--panel2); border:1px solid var(--line); color:var(--text);
@@ -254,7 +255,7 @@
     <button class="btn" id="copyBtn"  disabled title="نسخ المقطع المحدد (C)">⧉ نسخ</button>
     <button class="btn danger" id="delBtn" disabled title="حذف المقطع المحدد (Delete)">🗑 حذف</button>
   </div>
-  <div class="zoomCtl">🔍 تكبير <input type="range" id="zoom" min="20" max="300" value="80"></div>
+  <div class="zoomCtl">🔍 تكبير <input type="range" id="zoom" min="0" max="100" value="70"></div>
 </div>
 
 <div id="timelineArea">
@@ -301,14 +302,16 @@ try{
 
 /* ============ الحالة ============ */
 const player = document.getElementById('player');
-let srcURL = null, srcDuration = 0;
-let clips = [];            // {id, in, out}  (بالثواني من المصدر)
+let sources = [];          // {url, duration, thumbs:[], isBlob}  — كل فيديو مستورد
+let activeSrc = -1, srcSwapping = false;
+let clips = [];            // {id, src, in, out}  (src = رقم المصدر)
 let selectedId = null;
 let pxPerSec = 80;
+let zoomVal = 70;          // 0..100 على مقياس لوغاريتمي
 let playing = false;
 let timelineTime = 0;      // الزمن الحالي على التايملاين
-let thumbs = [];           // {t, dataURL}
 let nextId = 1;
+const projectLoaded = ()=> sources.length>0;
 
 const $ = id => document.getElementById(id);
 const ruler=$('ruler'), track=$('track'), inner=$('timelineInner'),
@@ -335,6 +338,7 @@ function fmt(t){
 /* ============ استيراد ============ */
 function openPicker(){ $('fileInput').click(); }
 $('importBtn').addEventListener('click', openPicker);
+$('newBtn').addEventListener('click', ()=>{ if(confirm('مسح كل المقاطع وبدء مشروع جديد؟')) resetProject(); });
 $('dropHint').addEventListener('click', openPicker);
 $('fileInput').addEventListener('change', e => {
   if(e.target.files && e.target.files[0]) loadVideo(e.target.files[0]);
@@ -386,24 +390,14 @@ $('urlInput').addEventListener('keydown', e=>{ if(e.key==='Enter') loadFromURL(e
 // تشغيل مباشر من الرابط (بدون تنزيل) — يعمل للمعاينة والقص،
 // لكن التصدير والصور المصغرة قد لا يعملان إذا كان الخادم يمنع CORS
 function loadVideoDirect(url){
-  if(srcURL && srcURL.startsWith('blob:')) URL.revokeObjectURL(srcURL);
-  srcURL = url;
-  player.crossOrigin = 'anonymous';
-  player.removeAttribute('src');
-  player.src = url;
-  player.load();
-  player.onerror = ()=>{
-    // محاولة أخيرة بدون crossOrigin (يشغّل لكن يمنع التصدير)
-    if(player.crossOrigin !== null){
-      player.crossOrigin = null; player.src = url; player.load();
-    } else {
+  probeVideo(url, true)
+    .then(d=> addSourceReady(url, d, false))
+    .catch(()=>{
       const sandboxed = (()=>{ try{return window.self!==window.top;}catch(e){return true;} })();
       showErr(sandboxed
         ? 'المعاينة المعزولة تمنع تحميل الروابط — حمّل الملف وافتحه في Chrome/Edge مباشرة'
         : 'تعذّر تحميل الفيديو من هذا الرابط — تأكد أنه رابط ملف فيديو مباشر (.mp4 / .webm)');
-    }
-  };
-  player.onloadedmetadata = ()=> onMetadataReady(url);
+    });
 }
 
 /* ============ 🔁 محول الصيغ (FFmpeg داخل المتصفح) ============ */
@@ -497,62 +491,81 @@ async function convertAndLoad(file){
   }
 }
 
-function loadVideo(file, allowConvert=true){
-  showErr('');
-  if(srcURL && srcURL.startsWith('blob:')) URL.revokeObjectURL(srcURL);
-  srcURL = URL.createObjectURL(file);
-  player.crossOrigin = null;
-  player.removeAttribute('src');
-  player.src = srcURL;
-  player.load();
-
-  player.onerror = ()=>{
-    if(allowConvert && file instanceof Blob){
-      convertAndLoad(file);       // الصيغة غير مدعومة → تحويل تلقائي إلى MP4
-    }else{
-      showErr('تعذّر تشغيل هذا الملف حتى بعد التحويل — قد يكون تالفاً.');
-    }
-  };
-
-  player.onloadedmetadata = ()=> onMetadataReady(file);
+// فحص فيديو (المدة وقابلية التشغيل) على عنصر مؤقت — بدون لمس المشغّل الرئيسي
+function probeVideo(url, cross){
+  return new Promise((res,rej)=>{
+    const v=document.createElement('video');
+    if(cross) v.crossOrigin='anonymous';
+    v.muted=true; v.preload='metadata'; v.src=url;
+    v.onerror=()=>rej(new Error('play'));
+    v.onloadedmetadata=async ()=>{
+      let d=v.duration;
+      if(!isFinite(d)||isNaN(d)||d<=0){
+        await new Promise(r=>{
+          const t=()=>{v.removeEventListener('timeupdate',t);r();};
+          v.addEventListener('timeupdate',t); v.currentTime=1e7; setTimeout(r,3000);
+        });
+        d=v.duration;
+      }
+      (isFinite(d)&&d>0) ? res(d) : rej(new Error('dur'));
+    };
+    setTimeout(()=>rej(new Error('timeout')),15000);
+  });
 }
 
-// تُستدعى بعد تحميل بيانات الفيديو — source إما Blob/File أو رابط نصي
-async function onMetadataReady(source){
-  let d = player.duration;
-  // بعض الملفات المسجّلة تُرجع Infinity — حيلة لاستخراج المدة الحقيقية
-  if(!isFinite(d) || isNaN(d) || d<=0){
-    await new Promise(res=>{
-      const onT=()=>{ player.removeEventListener('timeupdate',onT); res(); };
-      player.addEventListener('timeupdate', onT);
-      player.currentTime = 1e7;
-      setTimeout(res, 3000);
-    });
-    d = player.duration;
-    player.currentTime = 0;
+// كل استيراد يضيف مصدراً جديداً ومقطعاً في آخر التايملاين — لا يمسح شيئاً
+async function loadVideo(file, allowConvert=true){
+  showErr('');
+  const url=URL.createObjectURL(file);
+  try{
+    const dur=await probeVideo(url,false);
+    addSourceReady(url, dur, true);
+  }catch(e){
+    URL.revokeObjectURL(url);
+    if(allowConvert && file instanceof Blob) convertAndLoad(file);
+    else showErr('تعذّر تشغيل هذا الملف حتى بعد التحويل — قد يكون تالفاً.');
   }
-  if(!isFinite(d) || d<=0){ showErr('تعذّر قراءة مدة الفيديو.'); return; }
-
-  srcDuration = d;
-  clips = [{id:nextId++, in:0, out:srcDuration}];
-  selectedId = clips[0].id;
-  timelineTime = 0;
-  $('dropHint').classList.add('hidden');
-  showErr('');
-  ['playBtn','splitBtn','copyBtn','delBtn','exportBtn'].forEach(id=>$(id).disabled=false);
-  seekTimeline(0);
-  render();
-  makeThumbnails(source);
 }
 
-/* ============ الصور المصغّرة ============ */
-async function makeThumbnails(source){
-  thumbs = [];
+function addSourceReady(url, dur, isBlob){
+  const idx=sources.length;
+  sources.push({url, duration:dur, thumbs:[], isBlob});
+  clips.push({id:nextId++, src:idx, in:0, out:dur});
+  selectedId=clips[clips.length-1].id;
+  $('dropHint').classList.add('hidden'); showErr('');
+  ['playBtn','splitBtn','copyBtn','delBtn','exportBtn'].forEach(id=>$(id).disabled=false);
+  if(idx===0){ switchSrc(0, ()=>seekTimeline(0)); }
+  render();
+  makeThumbnails(idx);
+}
+
+// تبديل المشغّل بين ملفات المصادر (مع انتظار الجاهزية)
+function switchSrc(i, then){
+  if(activeSrc===i && player.src){ then&&then(); return; }
+  activeSrc=i; srcSwapping=true;
+  player.crossOrigin = sources[i].isBlob ? null : 'anonymous';
+  player.src=sources[i].url; player.load();
+  const done=()=>{ player.removeEventListener('loadeddata',done); if(srcSwapping){srcSwapping=false; then&&then();} };
+  player.addEventListener('loadeddata',done);
+  setTimeout(done, 6000);
+}
+
+// 🆕 مشروع جديد — مسح كل شيء
+function resetProject(){
+  sources.forEach(s=>{ if(s.isBlob) try{URL.revokeObjectURL(s.url);}catch(e){} });
+  sources=[]; clips=[]; activeSrc=-1; selectedId=null; timelineTime=0;
+  stopPlay(); player.removeAttribute('src'); player.load();
+  ['playBtn','splitBtn','copyBtn','delBtn','exportBtn'].forEach(id=>$(id).disabled=true);
+  $('dropHint').classList.remove('hidden');
+  render();
+}
+
+/* ============ الصور المصغّرة (لكل مصدر) ============ */
+async function makeThumbnails(idx){
+  const S=sources[idx];
   const v = document.createElement('video');
-  const isBlob = source instanceof Blob;
-  if(!isBlob) v.crossOrigin = 'anonymous';
-  v.src = isBlob ? URL.createObjectURL(source) : source;
-  v.muted = true; v.preload = 'auto';
+  if(!S.isBlob) v.crossOrigin = 'anonymous';
+  v.src = S.url; v.muted = true; v.preload = 'auto';
   const ok = await new Promise(r=>{
     v.onloadedmetadata = ()=>r(true);
     v.onerror = ()=>r(false);
@@ -563,31 +576,38 @@ async function makeThumbnails(source){
   const h = 92, w = Math.round(h * v.videoWidth/v.videoHeight) || 160;
   cv.width=w; cv.height=h;
   const ctx=cv.getContext('2d');
-  const step = Math.max(1, srcDuration/24); // حتى 24 صورة
+  const step = Math.max(1, S.duration/24); // حتى 24 صورة لكل مصدر
   try{
-    for(let t=0.1; t<srcDuration; t+=step){
+    for(let t=0.1; t<S.duration; t+=step){
       await new Promise(r=>{ v.onseeked=r; v.currentTime=t; setTimeout(r,2500); });
       ctx.drawImage(v,0,0,w,h);
-      thumbs.push({t, url:cv.toDataURL('image/jpeg',.5), w});
+      S.thumbs.push({t, url:cv.toDataURL('image/jpeg',.5), w});
       render(); // تحديث تدريجي
     }
   }catch(e){
-    // خادم يمنع CORS — لا يمكن قراءة الإطارات، نكمل بدون صور
     console.warn('thumbnails blocked by CORS:', e);
-    thumbs = []; render();
+    S.thumbs.length=0; render();
   }
-  if(isBlob) URL.revokeObjectURL(v.src);
 }
 
 /* ============ الرسم ============ */
+// زوم لوغاريتمي: أقصى تصغير يجعل الفيديو كله (ولو ساعات) يملأ الشاشة بالضبط
+function calcPps(){
+  const dur = Math.max(totalDuration(), 1);
+  const minP = Math.max(0.02, Math.min(80, (area.clientWidth-70)/dur));
+  const maxP = 300;
+  return minP * Math.pow(maxP/minP, zoomVal/100);
+}
 function render(){
+  pxPerSec = calcPps();
   const dur = Math.max(totalDuration(), 1);
   const width = Math.max(area.clientWidth, dur*pxPerSec + 120);
   inner.style.width = width+'px';
 
-  // المسطرة
+  // المسطرة — خطوة تكيفية من نصف ثانية حتى ساعة حسب الزوم
   ruler.innerHTML='';
-  const stepSec = pxPerSec>150 ? .5 : pxPerSec>60 ? 1 : pxPerSec>30 ? 2 : 5;
+  const stepsList=[0.5,1,2,5,10,15,30,60,120,300,600,900,1800,3600];
+  const stepSec = stepsList.find(s=>s*pxPerSec>=70) || 3600;
   for(let t=0;t<=dur+stepSec;t+=stepSec){
     const d=document.createElement('div');
     d.className='tick'; d.style.left=(t*pxPerSec)+'px';
@@ -599,21 +619,22 @@ function render(){
   track.innerHTML='';
   clips.forEach((c,i)=>{
     const st=clipStartTime(i), d=c.out-c.in;
+    const S=sources[c.src];
     const el=document.createElement('div');
     el.className='clip'+(c.id===selectedId?' selected':'');
     el.style.left=(st*pxPerSec)+'px';
-    el.style.width=(d*pxPerSec)+'px';
+    el.style.width=Math.max(6, d*pxPerSec)+'px';
     el.dataset.id=c.id;
 
-    // صور مصغرة ضمن مدى المقطع
+    // صور مصغرة ضمن مدى المقطع (من مصدر هذا المقطع)
     const tw=document.createElement('div'); tw.className='thumbs';
-    thumbs.filter(th=>th.t>=c.in-1 && th.t<=c.out+1).forEach(th=>{
+    (S?.thumbs||[]).filter(th=>th.t>=c.in-1 && th.t<=c.out+1).forEach(th=>{
       const img=document.createElement('img'); img.src=th.url; tw.appendChild(img);
     });
     el.appendChild(tw);
 
     const lb=document.createElement('div'); lb.className='label';
-    lb.textContent = fmt(d);
+    lb.textContent = (sources.length>1 ? '🎞'+(c.src+1)+' · ' : '') + fmt(d);
     el.appendChild(lb);
 
     const hl=document.createElement('div'); hl.className='handle left';
@@ -622,8 +643,6 @@ function render(){
 
     el.addEventListener('pointerdown', e=>{
       selectedId=c.id; render();
-      const tEl=track.querySelector(`[data-id="${c.id}"]`);
-      const nhl=tEl?.querySelector('.handle.left'), nhr=tEl?.querySelector('.handle.right');
       if(e.target.classList.contains('handle')){
         startTrim(c, e.target.classList.contains('left')?'in':'out', e);
       }
@@ -646,10 +665,11 @@ function startTrim(clip, edge, e){
   e.preventDefault(); e.stopPropagation();
   try{ e.target.setPointerCapture(e.pointerId); }catch(err){}
   const startX = e.clientX, orig = clip[edge];
+  const maxOut = sources[clip.src] ? sources[clip.src].duration : orig;
   const move = ev=>{
     const dx = (ev.clientX-startX)/pxPerSec;
     if(edge==='in')  clip.in  = Math.min(Math.max(0, orig+dx), clip.out-0.1);
-    else             clip.out = Math.max(Math.min(srcDuration, orig+dx), clip.in+0.1);
+    else             clip.out = Math.max(Math.min(maxOut, orig+dx), clip.in+0.1);
     render();
   };
   const up = ()=>{
@@ -668,7 +688,11 @@ function seekTimeline(t){
   t = Math.min(Math.max(0,t), Math.max(0,totalDuration()-0.01));
   timelineTime = t;
   const hit = clipAt(t);
-  if(hit) player.currentTime = hit.clip.in + hit.local;
+  if(hit){
+    const tv = hit.clip.in + hit.local;
+    if(hit.clip.src !== activeSrc) switchSrc(hit.clip.src, ()=>{ player.currentTime = tv; });
+    else player.currentTime = tv;
+  }
   render();
 }
 ruler.addEventListener('pointerdown', e=>{
@@ -689,6 +713,7 @@ ruler.addEventListener('pointerdown', e=>{
 /* ============ التشغيل ============ */
 function tick(){
   if(!playing) return;
+  if(srcSwapping){ requestAnimationFrame(tick); return; }  // انتظار تبديل الملف
   const hit = clipAt(timelineTime);
   if(!hit){ stopPlay(); return; }
   const {clip,index} = hit;
@@ -697,8 +722,13 @@ function tick(){
   if(player.currentTime >= clip.out - 0.03){
     if(index < clips.length-1){
       const nc = clips[index+1];
-      player.currentTime = nc.in;
-      timelineTime = clipStartTime(index+1);
+      timelineTime = clipStartTime(index+1) + 0.001;
+      if(nc.src !== activeSrc){
+        player.pause();
+        switchSrc(nc.src, ()=>{ player.currentTime = nc.in; if(playing) player.play(); });
+      } else {
+        player.currentTime = nc.in;
+      }
     } else { stopPlay(); seekTimeline(0); return; }
   }
   playhead.style.left=(timelineTime*pxPerSec)+'px';
@@ -709,7 +739,8 @@ function startPlay(){
   if(!clips.length) return;
   if(timelineTime >= totalDuration()-0.05) seekTimeline(0);
   playing=true; $('playBtn').textContent='⏸ إيقاف';
-  player.play(); requestAnimationFrame(tick);
+  if(!srcSwapping) player.play();
+  requestAnimationFrame(tick);
 }
 function stopPlay(){
   playing=false; $('playBtn').textContent='▶ تشغيل'; player.pause();
@@ -723,7 +754,7 @@ function splitAtPlayhead(){
   const {clip,index,local} = hit;
   if(local<0.1 || local>(clip.out-clip.in)-0.1) return; // قريب جداً من الطرف
   const cut = clip.in + local;
-  const right = {id:nextId++, in:cut, out:clip.out};
+  const right = {id:nextId++, src:clip.src, in:cut, out:clip.out};
   clip.out = cut;
   clips.splice(index+1,0,right);
   selectedId = right.id;
@@ -733,7 +764,7 @@ function copySelected(){
   const i = clips.findIndex(c=>c.id===selectedId);
   if(i<0) return;
   const c = clips[i];
-  clips.splice(i+1,0,{id:nextId++, in:c.in, out:c.out});
+  clips.splice(i+1,0,{id:nextId++, src:c.src, in:c.in, out:c.out});
   render();
 }
 function deleteSelected(){
@@ -748,7 +779,7 @@ $('splitBtn').onclick=splitAtPlayhead;
 $('copyBtn').onclick=copySelected;
 $('delBtn').onclick=deleteSelected;
 
-$('zoom').oninput = e=>{ pxPerSec=+e.target.value; render(); };
+$('zoom').oninput = e=>{ zoomVal=+e.target.value; render(); };
 
 document.addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT') return;
@@ -1305,7 +1336,7 @@ player.addEventListener('loadedmetadata', fitOverlay);
 let lastFx=performance.now();
 function fxLoop(now){
   const dt=Math.min(.05,(now-lastFx)/1000); lastFx=now;
-  if(fx.width>0 && srcDuration>0){
+  if(fx.width>0 && projectLoaded()){
     if(needsCanvasBase()){
       player.style.opacity='0';
       drawBaseComposite(fxCtx,fx.width,fx.height,false);
