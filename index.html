@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MajanCut — محرر فيديو بسيط</title>
+<style>
+  :root{
+    --bg:#101014; --panel:#17171d; --panel2:#1e1e26; --line:#2a2a35;
+    --text:#e9e9ef; --dim:#8b8b9a;
+    --accent:#e8b23a; --accent-dim:#8a6a22;
+    --clip:#2b3a4d; --clip-sel:#3d5a80;
+    --danger:#e05555;
+    font-size:15px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; user-select:none;}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:"Segoe UI", Tahoma, "Noto Kufi Arabic", sans-serif;
+    height:100vh; display:flex; flex-direction:column; overflow:hidden;
+  }
+
+  /* ===== Top bar ===== */
+  header{
+    display:flex; align-items:center; gap:12px;
+    padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line);
+  }
+  header h1{font-size:1.05rem; font-weight:700; letter-spacing:.5px;}
+  header h1 b{color:var(--accent);}
+  header .spacer{flex:1;}
+  .btn{
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    padding:7px 14px; border-radius:8px; cursor:pointer; font-size:.9rem;
+    display:inline-flex; align-items:center; gap:6px; transition:background .15s, border-color .15s;
+  }
+  .btn:hover{background:#26262f; border-color:#3a3a48;}
+  .btn:disabled{opacity:.4; cursor:not-allowed;}
+  .btn.primary{background:var(--accent); color:#181206; border-color:var(--accent); font-weight:700;}
+  .btn.primary:hover{background:#f2c256;}
+  .btn.danger:hover{border-color:var(--danger); color:var(--danger);}
+  .btn:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+  /* ===== Preview ===== */
+  #mainRow{flex:1; display:flex; min-height:0;}
+  #previewWrap{
+    flex:1; display:flex; align-items:center; justify-content:center;
+    background:#0a0a0d; min-height:0; position:relative;
+  }
+  #fxCanvas{
+    position:absolute; pointer-events:none; z-index:5;
+  }
+
+  /* ===== Plugins panel ===== */
+  #pluginPanel{
+    width:240px; background:var(--panel); border-inline-start:1px solid var(--line);
+    display:flex; flex-direction:column; overflow-y:auto;
+  }
+  #pluginPanel.hidden{display:none;}
+  #pluginPanel h2{
+    font-size:.9rem; padding:12px 14px; border-bottom:1px solid var(--line);
+    color:var(--accent); display:flex; align-items:center; gap:8px;
+  }
+  .plugin{
+    padding:12px 14px; border-bottom:1px solid var(--line);
+  }
+  .plugin .row{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .plugin .pname{font-size:.88rem;}
+  .plugin .pdesc{font-size:.72rem; color:var(--dim); margin-top:4px;}
+  .plugin .params{margin-top:10px; display:none; flex-direction:column; gap:8px;}
+  .plugin.on .params{display:flex;}
+  .plugin .params label{font-size:.75rem; color:var(--dim); display:flex; justify-content:space-between; align-items:center; gap:8px;}
+  .plugin .params input[type=range]{width:120px;}
+  .switch{
+    position:relative; width:38px; height:20px; background:#33333f; border-radius:20px;
+    cursor:pointer; transition:background .2s; flex:0 0 auto;
+  }
+  .switch::after{
+    content:""; position:absolute; top:2px; inset-inline-start:2px; width:16px; height:16px;
+    background:#888; border-radius:50%; transition:all .2s;
+  }
+  .plugin.on .switch{background:var(--accent);}
+  .plugin.on .switch::after{inset-inline-start:20px; background:#181206;}
+  #emptyPlugins{padding:20px 14px; color:var(--dim); font-size:.8rem; text-align:center;}
+  #pluginClose{
+    margin-inline-start:auto; background:var(--panel2); border:1px solid var(--line);
+    color:var(--text); font-size:1.1rem; cursor:pointer;
+    width:38px; height:38px; border-radius:8px; flex:0 0 auto;
+  }
+  #pluginClose:hover{color:#fff; border-color:var(--danger);}
+  #pluginDone{
+    margin:12px 14px; padding:12px; background:var(--accent); color:#181206;
+    border:none; border-radius:10px; font-weight:700; font-size:.95rem; cursor:pointer;
+  }
+  #panelBackdrop{
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:44;
+    cursor:pointer;
+  }
+
+  /* ===== تجاوب الموبايل والتابلت ===== */
+  *{-webkit-tap-highlight-color:transparent;}
+  #timelineArea, #ruler, .handle, .clip{touch-action:none;}
+  @media (max-width:900px){
+    body.panelOpen #panelBackdrop{display:block;}
+    :root{font-size:14px;}
+    header{flex-wrap:wrap; gap:8px; padding:8px 10px;}
+    #urlInput{order:10; width:100%; flex:1 1 100%;}
+    #urlBtn{order:11;}
+    .btn{padding:9px 12px;}
+    #controls{flex-wrap:wrap; gap:8px; padding:8px 10px;}
+    .zoomCtl input[type=range]{width:80px;}
+    #timelineArea{height:150px;}
+    #track{height:78px;}
+    #status{display:none;}
+    .handle{width:16px;}          /* مقبض أعرض لسهولة اللمس */
+    /* لوحة البلاجنز تصير درج منزلق فوق الشاشة بدل تقسيمها */
+    #pluginPanel{
+      position:fixed; top:0; bottom:0; inset-inline-end:0;
+      width:min(85vw,300px); z-index:45;
+      box-shadow:-8px 0 30px rgba(0,0,0,.6);
+    }
+  }
+  @media (max-width:520px){
+    #timelineArea{height:130px;}
+    #track{height:64px;}
+    header h1{font-size:.95rem;}
+  }
+  #player{max-width:100%; max-height:100%; background:#000;}
+  #dropHint{
+    position:absolute; inset:0; display:flex; flex-direction:column; gap:14px;
+    align-items:center; justify-content:center; color:var(--dim); text-align:center; padding:20px;
+  }
+  #dropHint .big{font-size:2.6rem;}
+  #dropHint.hidden{display:none;}
+
+  /* ===== Controls ===== */
+  #controls{
+    display:flex; align-items:center; gap:14px; padding:8px 16px;
+    background:var(--panel); border-top:1px solid var(--line);
+  }
+  #timeLabel{font-variant-numeric:tabular-nums; color:var(--dim); font-size:.9rem; direction:ltr;}
+  #toolbar{display:flex; gap:8px;}
+  .zoomCtl{display:flex; align-items:center; gap:6px; color:var(--dim); font-size:.85rem;}
+  input[type=range]{accent-color:var(--accent); width:110px;}
+
+  /* ===== Timeline ===== */
+  #timelineArea{
+    height:190px; background:var(--panel2); border-top:1px solid var(--line);
+    overflow-x:auto; overflow-y:hidden; position:relative; direction:ltr;
+  }
+  #timelineInner{position:relative; height:100%; min-width:100%;}
+  #ruler{
+    height:28px; position:relative; border-bottom:1px solid var(--line);
+    cursor:pointer; background:var(--panel);
+  }
+  .tick{
+    position:absolute; top:0; height:100%; border-left:1px solid #3a3a48;
+    color:var(--dim); font-size:.68rem; padding:3px 0 0 4px; white-space:nowrap;
+  }
+  #track{
+    position:relative; height:96px; margin-top:18px;
+  }
+  .clip{
+    position:absolute; top:0; height:100%; background:var(--clip);
+    border:2px solid transparent; border-radius:8px; overflow:hidden; cursor:pointer;
+    display:flex; align-items:flex-end;
+  }
+  .clip.selected{border-color:var(--accent); box-shadow:0 0 0 2px rgba(232,178,58,.25);}
+  .clip .thumbs{position:absolute; inset:0; display:flex; overflow:hidden;}
+  .clip .thumbs img{height:100%; flex:0 0 auto; pointer-events:none; opacity:.85;}
+  .clip .label{
+    position:relative; z-index:2; font-size:.7rem; padding:2px 6px; direction:rtl;
+    background:rgba(0,0,0,.55); border-radius:0 6px 0 0; color:#fff; font-variant-numeric:tabular-nums;
+  }
+  .handle{
+    position:absolute; top:0; width:10px; height:100%; z-index:3; cursor:ew-resize;
+    background:rgba(232,178,58,0); transition:background .15s;
+  }
+  .clip.selected .handle{background:rgba(232,178,58,.5);}
+  .handle.left{left:0; border-radius:6px 0 0 6px;}
+  .handle.right{right:0; border-radius:0 6px 6px 0;}
+
+  #playhead{
+    position:absolute; top:0; bottom:0; width:2px; background:var(--accent);
+    z-index:10; pointer-events:none;
+  }
+  #playhead::before{
+    content:""; position:absolute; top:0; left:-5px;
+    border:6px solid transparent; border-top:9px solid var(--accent);
+  }
+
+  #status{
+    padding:5px 16px; font-size:.78rem; color:var(--dim); background:var(--panel);
+    border-top:1px solid var(--line); display:flex; gap:18px; direction:rtl;
+  }
+  #status .kbd{border:1px solid var(--line); border-radius:4px; padding:0 5px; font-size:.72rem; margin:0 2px;}
+
+  #exportOverlay{
+    position:fixed; inset:0; background:rgba(10,10,13,.85); z-index:50;
+    display:none; align-items:center; justify-content:center; flex-direction:column; gap:16px;
+  }
+  #exportOverlay.show{display:flex;}
+  #exportOverlay .box{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:28px 36px; text-align:center;}
+  #exportOverlay .pct{color:var(--accent); font-size:1.6rem; font-weight:700; margin-top:8px; font-variant-numeric:tabular-nums;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ماجان<b>كَت</b> ✂️</h1>
+  <button class="btn" id="importBtn">📂 استيراد فيديو</button>
+  <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi,.wmv,.flv,.mpg,.mpeg,.3gp,.3g2,.ts,.m2ts,.mts,.vob,.ogv,.divx,.asf,.rm,.rmvb" hidden>
+  <input type="url" id="urlInput" placeholder="الصق رابط الفيديو هنا…" dir="ltr"
+    style="background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    padding:7px 12px; border-radius:8px; width:280px; font-size:.85rem; outline:none;">
+  <button class="btn" id="urlBtn">🔗 استيراد بالرابط</button>
+  <div class="spacer"></div>
+  <button class="btn" id="pluginToggle">🧩 بلاجنز</button>
+  <button class="btn primary" id="exportBtn" disabled>⬇ تصدير الفيديو</button>
+</header>
+
+<div id="mainRow">
+<div id="panelBackdrop"
+     onclick="document.getElementById('pluginPanel').classList.add('hidden');document.body.classList.remove('panelOpen')"
+     ontouchstart="document.getElementById('pluginPanel').classList.add('hidden');document.body.classList.remove('panelOpen')"></div>
+<aside id="pluginPanel">
+  <h2>🧩 بلاجنز
+    <button id="pluginClose" title="إغلاق"
+      onclick="document.getElementById('pluginPanel').classList.add('hidden');document.body.classList.remove('panelOpen')">✕</button>
+  </h2>
+  <div id="pluginList"></div>
+  <div id="emptyPlugins" style="display:none">لا توجد بلاجنز بعد — سنضيفها هنا تباعاً</div>
+  <button id="pluginDone"
+    onclick="document.getElementById('pluginPanel').classList.add('hidden');document.body.classList.remove('panelOpen')">✓ تم — إغلاق</button>
+</aside>
+
+<div id="previewWrap">
+  <video id="player" playsinline></video>
+  <canvas id="fxCanvas"></canvas>
+  <div id="dropHint" style="cursor:pointer">
+    <div class="big">🎬</div>
+    <div>اضغط هنا أو اسحب ملف فيديو — أو الصق رابط URL في الأعلى</div>
+    <div style="font-size:.8rem">أي صيغة فيديو — MP4 · MOV · MKV · AVI · WMV · FLV · MPG وغيرها (غير المدعوم يُحوَّل تلقائياً)</div>
+    <div id="errMsg" style="color:#e05555; font-size:.85rem"></div>
+  </div>
+</div>
+</div><!-- /mainRow -->
+
+<div id="controls">
+  <button class="btn" id="playBtn" disabled>▶ تشغيل</button>
+  <span id="timeLabel">00:00.0 / 00:00.0</span>
+  <div class="spacer" style="flex:1"></div>
+  <div id="toolbar">
+    <button class="btn" id="splitBtn" disabled title="تقسيم عند المؤشر (S)">✂ قص</button>
+    <button class="btn" id="copyBtn"  disabled title="نسخ المقطع المحدد (C)">⧉ نسخ</button>
+    <button class="btn danger" id="delBtn" disabled title="حذف المقطع المحدد (Delete)">🗑 حذف</button>
+  </div>
+  <div class="zoomCtl">🔍 تكبير <input type="range" id="zoom" min="20" max="300" value="80"></div>
+</div>
+
+<div id="timelineArea">
+  <div id="timelineInner">
+    <div id="ruler"></div>
+    <div id="track"></div>
+    <div id="playhead" style="left:0"></div>
+  </div>
+</div>
+
+<div id="status">
+  <span><span class="kbd">Space</span> تشغيل/إيقاف</span>
+  <span><span class="kbd">S</span> قص عند المؤشر</span>
+  <span><span class="kbd">C</span> نسخ</span>
+  <span><span class="kbd">Del</span> حذف</span>
+  <span>اسحب حواف المقطع لقصّ البداية/النهاية</span>
+</div>
+
+<div id="exportOverlay">
+  <div class="box">
+    <div>جاري التصدير… يتم تشغيل المشروع وتسجيله، لا تغلق الصفحة</div>
+    <div class="pct" id="exportPct">0%</div>
+    <button class="btn" id="cancelExport" style="margin-top:14px">إلغاء</button>
+  </div>
+</div>
+
+<div id="convertOverlay" style="position:fixed;inset:0;background:rgba(10,10,13,.88);z-index:60;display:none;align-items:center;justify-content:center;">
+  <div class="box" style="background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px 36px;text-align:center;max-width:340px;">
+    <div id="convertMsg">جاري التحويل…</div>
+    <div class="pct" id="convertPct" style="color:var(--accent);font-size:1.6rem;font-weight:700;margin-top:8px;">0%</div>
+  </div>
+</div>
+
+<script>
+/* تنبيه إذا كان البرنامج يعمل داخل معاينة معزولة (iframe) */
+try{
+  if(window.self !== window.top){
+    const bar=document.createElement('div');
+    bar.style.cssText='background:#5a3a1a;color:#ffd28a;padding:8px 16px;font-size:.85rem;text-align:center;border-bottom:1px solid #7a5a2a;';
+    bar.innerHTML='⚠️ أنت داخل نافذة معاينة معزولة — استيراد الروابط والملفات قد لا يعمل هنا. <b>حمّل الملف وافتحه مباشرة في Chrome أو Edge</b>';
+    document.body.prepend(bar);
+  }
+}catch(e){}
+
+/* ============ الحالة ============ */
+const player = document.getElementById('player');
+let srcURL = null, srcDuration = 0;
+let clips = [];            // {id, in, out}  (بالثواني من المصدر)
+let selectedId = null;
+let pxPerSec = 80;
+let playing = false;
+let timelineTime = 0;      // الزمن الحالي على التايملاين
+let thumbs = [];           // {t, dataURL}
+let nextId = 1;
+
+const $ = id => document.getElementById(id);
+const ruler=$('ruler'), track=$('track'), inner=$('timelineInner'),
+      playhead=$('playhead'), area=$('timelineArea');
+
+/* ============ أدوات ============ */
+const totalDuration = () => clips.reduce((s,c)=>s + (c.out-c.in), 0);
+const clipStartTime = i => clips.slice(0,i).reduce((s,c)=>s+(c.out-c.in),0);
+function clipAt(t){
+  let acc=0;
+  for(let i=0;i<clips.length;i++){
+    const d=clips[i].out-clips[i].in;
+    if(t < acc+d - 1e-4 || i===clips.length-1) return {clip:clips[i], index:i, local:t-acc};
+    acc+=d;
+  }
+  return null;
+}
+function fmt(t){
+  t=Math.max(0,t);
+  const m=Math.floor(t/60), s=(t%60);
+  return String(m).padStart(2,'0')+':'+s.toFixed(1).padStart(4,'0');
+}
+
+/* ============ استيراد ============ */
+function openPicker(){ $('fileInput').click(); }
+$('importBtn').addEventListener('click', openPicker);
+$('dropHint').addEventListener('click', openPicker);
+$('fileInput').addEventListener('change', e => {
+  if(e.target.files && e.target.files[0]) loadVideo(e.target.files[0]);
+  e.target.value = ''; // للسماح بإعادة اختيار نفس الملف
+});
+document.body.addEventListener('dragover', e=>e.preventDefault());
+document.body.addEventListener('drop', e=>{
+  e.preventDefault();
+  const files=[...(e.dataTransfer.files||[])];
+  const f=files.find(f=>f.type.startsWith('video/')) || files.find(f=>/\.(mp4|mov|webm|mkv|m4v|avi)$/i.test(f.name));
+  if(f) loadVideo(f);
+  else showErr('الملف المسحوب ليس ملف فيديو مدعوم');
+});
+
+function showErr(msg){
+  const el=$('errMsg'); if(el) el.textContent = msg || '';
+  if(msg) $('dropHint').classList.remove('hidden');
+}
+
+/* ============ استيراد بالرابط ============ */
+async function loadFromURL(url){
+  url = (url||'').trim();
+  if(!url){ showErr('الصق رابط الفيديو أولاً'); return; }
+  if(!/^https?:\/\//i.test(url)){ showErr('الرابط يجب أن يبدأ بـ http أو https'); return; }
+  if(/youtube\.com|youtu\.be|tiktok\.com|instagram\.com/i.test(url)){
+    showErr('روابط يوتيوب/تيك توك/انستغرام ليست ملفات فيديو مباشرة — يلزم رابط ينتهي بملف مثل .mp4');
+    return;
+  }
+  showErr('');
+  $('urlBtn').disabled = true; $('urlBtn').textContent = '⏳ جاري التحميل…';
+  try{
+    // المحاولة الأولى: تنزيل الملف كاملاً (الأفضل — يتيح الصور المصغرة والتصدير)
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const blob = await res.blob();
+    if(blob.size < 1000) throw new Error('الملف صغير جداً أو غير صالح');
+    loadVideo(blob);
+  }catch(err){
+    // فشل التنزيل (غالباً CORS) — تشغيل مباشر من الرابط
+    console.warn('fetch failed, falling back to direct src:', err);
+    loadVideoDirect(url);
+  }finally{
+    $('urlBtn').disabled = false; $('urlBtn').textContent = '🔗 استيراد بالرابط';
+  }
+}
+$('urlBtn').addEventListener('click', ()=>loadFromURL($('urlInput').value));
+$('urlInput').addEventListener('keydown', e=>{ if(e.key==='Enter') loadFromURL(e.target.value); });
+
+// تشغيل مباشر من الرابط (بدون تنزيل) — يعمل للمعاينة والقص،
+// لكن التصدير والصور المصغرة قد لا يعملان إذا كان الخادم يمنع CORS
+function loadVideoDirect(url){
+  if(srcURL && srcURL.startsWith('blob:')) URL.revokeObjectURL(srcURL);
+  srcURL = url;
+  player.crossOrigin = 'anonymous';
+  player.removeAttribute('src');
+  player.src = url;
+  player.load();
+  player.onerror = ()=>{
+    // محاولة أخيرة بدون crossOrigin (يشغّل لكن يمنع التصدير)
+    if(player.crossOrigin !== null){
+      player.crossOrigin = null; player.src = url; player.load();
+    } else {
+      const sandboxed = (()=>{ try{return window.self!==window.top;}catch(e){return true;} })();
+      showErr(sandboxed
+        ? 'المعاينة المعزولة تمنع تحميل الروابط — حمّل الملف وافتحه في Chrome/Edge مباشرة'
+        : 'تعذّر تحميل الفيديو من هذا الرابط — تأكد أنه رابط ملف فيديو مباشر (.mp4 / .webm)');
+    }
+  };
+  player.onloadedmetadata = ()=> onMetadataReady(url);
+}
+
+/* ============ 🔁 محول الصيغ (FFmpeg داخل المتصفح) ============ */
+let ffmpegInst=null;
+const FF_UMD ='https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+const FF_CORE='https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+
+function showConvert(on,msg){
+  $('convertOverlay').style.display = on?'flex':'none';
+  if(msg) $('convertMsg').textContent=msg;
+  if(on) $('convertPct').textContent='';
+}
+async function blobify(url,type){
+  const r=await fetch(url);
+  if(!r.ok) throw new Error('cdn');
+  return URL.createObjectURL(new Blob([await r.arrayBuffer()],{type}));
+}
+async function ensureFFmpeg(){
+  if(ffmpegInst) return ffmpegInst;
+  await new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=FF_UMD+'/ffmpeg.js'; s.onload=res; s.onerror=()=>rej(new Error('cdn'));
+    document.head.appendChild(s);
+    setTimeout(()=>rej(new Error('cdn')),30000);
+  });
+  const {FFmpeg}=FFmpegWASM;
+  const ff=new FFmpeg();
+  const cfg={
+    coreURL: await blobify(FF_CORE+'/ffmpeg-core.js','text/javascript'),
+    wasmURL: await blobify(FF_CORE+'/ffmpeg-core.wasm','application/wasm'),
+  };
+  try{ cfg.classWorkerURL = await blobify(FF_UMD+'/814.ffmpeg.js','text/javascript'); }catch(e){}
+  await ff.load(cfg);
+  ff.on('progress', ({progress})=>{
+    if(progress>0 && progress<=1) $('convertPct').textContent=Math.round(progress*100)+'%';
+  });
+  ffmpegInst=ff;
+  return ff;
+}
+// اختبار سريع: هل يستطيع المتصفح تشغيل هذا الملف؟
+function canPlayBlob(blob){
+  return new Promise(res=>{
+    const v=document.createElement('video');
+    const u=URL.createObjectURL(blob);
+    const fin=ok=>{ URL.revokeObjectURL(u); res(ok); };
+    v.onloadeddata=()=>fin(true);
+    v.onerror=()=>fin(false);
+    setTimeout(()=>fin(false),8000);
+    v.muted=true; v.src=u; v.load();
+  });
+}
+async function convertAndLoad(file){
+  showConvert(true,'⏳ الصيغة غير مدعومة في المتصفح — جاري تحميل محرك التحويل (مرة واحدة فقط، ~30MB)…');
+  try{
+    const ff=await ensureFFmpeg();
+    const ext=(file.name && file.name.includes('.')) ? file.name.split('.').pop() : 'dat';
+    const inName='in.'+ext;
+    await ff.writeFile(inName, new Uint8Array(await file.arrayBuffer()));
+
+    // محاولة 1: نقل سريع بدون إعادة ترميز (ثوانٍ) — ينجح لو الترميز الداخلي متوافق
+    let outBlob=null;
+    showConvert(true,'🔁 محاولة تحويل سريع…');
+    try{
+      await ff.exec(['-i',inName,'-c','copy','-movflags','faststart','fast.mp4']);
+      const d=await ff.readFile('fast.mp4');
+      if(d.length>2000){
+        const b=new Blob([d.buffer],{type:'video/mp4'});
+        if(await canPlayBlob(b)) outBlob=b;
+      }
+      try{ await ff.deleteFile('fast.mp4'); }catch(e){}
+    }catch(e){}
+
+    // محاولة 2: إعادة ترميز كاملة إلى H.264 (أبطأ لكن يقبل أي صيغة)
+    if(!outBlob){
+      showConvert(true,'🔁 جاري إعادة ترميز الفيديو إلى MP4 — قد يستغرق دقائق حسب طول الفيديو…');
+      await ff.exec(['-i',inName,'-c:v','libx264','-preset','veryfast','-crf','23',
+                     '-pix_fmt','yuv420p','-c:a','aac','-b:a','128k','-movflags','faststart','out.mp4']);
+      const d=await ff.readFile('out.mp4');
+      outBlob=new Blob([d.buffer],{type:'video/mp4'});
+      try{ await ff.deleteFile('out.mp4'); }catch(e){}
+    }
+    try{ await ff.deleteFile(inName); }catch(e){}
+
+    showConvert(false);
+    loadVideo(outBlob, false);   // false = لا تعِد محاولة التحويل مرة أخرى
+  }catch(e){
+    showConvert(false);
+    showErr(e.message==='cdn'
+      ? 'محرك التحويل يحتاج إنترنت لأول مرة — تأكد من الاتصال (ولا يعمل داخل المعاينة المعزولة)'
+      : 'فشل تحويل هذا الملف — قد يكون تالفاً أو محمياً');
+  }
+}
+
+function loadVideo(file, allowConvert=true){
+  showErr('');
+  if(srcURL && srcURL.startsWith('blob:')) URL.revokeObjectURL(srcURL);
+  srcURL = URL.createObjectURL(file);
+  player.crossOrigin = null;
+  player.removeAttribute('src');
+  player.src = srcURL;
+  player.load();
+
+  player.onerror = ()=>{
+    if(allowConvert && file instanceof Blob){
+      convertAndLoad(file);       // الصيغة غير مدعومة → تحويل تلقائي إلى MP4
+    }else{
+      showErr('تعذّر تشغيل هذا الملف حتى بعد التحويل — قد يكون تالفاً.');
+    }
+  };
+
+  player.onloadedmetadata = ()=> onMetadataReady(file);
+}
+
+// تُستدعى بعد تحميل بيانات الفيديو — source إما Blob/File أو رابط نصي
+async function onMetadataReady(source){
+  let d = player.duration;
+  // بعض الملفات المسجّلة تُرجع Infinity — حيلة لاستخراج المدة الحقيقية
+  if(!isFinite(d) || isNaN(d) || d<=0){
+    await new Promise(res=>{
+      const onT=()=>{ player.removeEventListener('timeupdate',onT); res(); };
+      player.addEventListener('timeupdate', onT);
+      player.currentTime = 1e7;
+      setTimeout(res, 3000);
+    });
+    d = player.duration;
+    player.currentTime = 0;
+  }
+  if(!isFinite(d) || d<=0){ showErr('تعذّر قراءة مدة الفيديو.'); return; }
+
+  srcDuration = d;
+  clips = [{id:nextId++, in:0, out:srcDuration}];
+  selectedId = clips[0].id;
+  timelineTime = 0;
+  $('dropHint').classList.add('hidden');
+  showErr('');
+  ['playBtn','splitBtn','copyBtn','delBtn','exportBtn'].forEach(id=>$(id).disabled=false);
+  seekTimeline(0);
+  render();
+  makeThumbnails(source);
+}
+
+/* ============ الصور المصغّرة ============ */
+async function makeThumbnails(source){
+  thumbs = [];
+  const v = document.createElement('video');
+  const isBlob = source instanceof Blob;
+  if(!isBlob) v.crossOrigin = 'anonymous';
+  v.src = isBlob ? URL.createObjectURL(source) : source;
+  v.muted = true; v.preload = 'auto';
+  const ok = await new Promise(r=>{
+    v.onloadedmetadata = ()=>r(true);
+    v.onerror = ()=>r(false);
+    setTimeout(()=>r(false), 8000);
+  });
+  if(!ok) return; // بدون صور مصغرة — التحرير يعمل طبيعياً
+  const cv = document.createElement('canvas');
+  const h = 92, w = Math.round(h * v.videoWidth/v.videoHeight) || 160;
+  cv.width=w; cv.height=h;
+  const ctx=cv.getContext('2d');
+  const step = Math.max(1, srcDuration/24); // حتى 24 صورة
+  try{
+    for(let t=0.1; t<srcDuration; t+=step){
+      await new Promise(r=>{ v.onseeked=r; v.currentTime=t; setTimeout(r,2500); });
+      ctx.drawImage(v,0,0,w,h);
+      thumbs.push({t, url:cv.toDataURL('image/jpeg',.5), w});
+      render(); // تحديث تدريجي
+    }
+  }catch(e){
+    // خادم يمنع CORS — لا يمكن قراءة الإطارات، نكمل بدون صور
+    console.warn('thumbnails blocked by CORS:', e);
+    thumbs = []; render();
+  }
+  if(isBlob) URL.revokeObjectURL(v.src);
+}
+
+/* ============ الرسم ============ */
+function render(){
+  const dur = Math.max(totalDuration(), 1);
+  const width = Math.max(area.clientWidth, dur*pxPerSec + 120);
+  inner.style.width = width+'px';
+
+  // المسطرة
+  ruler.innerHTML='';
+  const stepSec = pxPerSec>150 ? .5 : pxPerSec>60 ? 1 : pxPerSec>30 ? 2 : 5;
+  for(let t=0;t<=dur+stepSec;t+=stepSec){
+    const d=document.createElement('div');
+    d.className='tick'; d.style.left=(t*pxPerSec)+'px';
+    d.textContent = fmt(t);
+    ruler.appendChild(d);
+  }
+
+  // المقاطع
+  track.innerHTML='';
+  clips.forEach((c,i)=>{
+    const st=clipStartTime(i), d=c.out-c.in;
+    const el=document.createElement('div');
+    el.className='clip'+(c.id===selectedId?' selected':'');
+    el.style.left=(st*pxPerSec)+'px';
+    el.style.width=(d*pxPerSec)+'px';
+    el.dataset.id=c.id;
+
+    // صور مصغرة ضمن مدى المقطع
+    const tw=document.createElement('div'); tw.className='thumbs';
+    thumbs.filter(th=>th.t>=c.in-1 && th.t<=c.out+1).forEach(th=>{
+      const img=document.createElement('img'); img.src=th.url; tw.appendChild(img);
+    });
+    el.appendChild(tw);
+
+    const lb=document.createElement('div'); lb.className='label';
+    lb.textContent = fmt(d);
+    el.appendChild(lb);
+
+    const hl=document.createElement('div'); hl.className='handle left';
+    const hr=document.createElement('div'); hr.className='handle right';
+    el.appendChild(hl); el.appendChild(hr);
+
+    el.addEventListener('pointerdown', e=>{
+      selectedId=c.id; render();
+      const tEl=track.querySelector(`[data-id="${c.id}"]`);
+      const nhl=tEl?.querySelector('.handle.left'), nhr=tEl?.querySelector('.handle.right');
+      if(e.target.classList.contains('handle')){
+        startTrim(c, e.target.classList.contains('left')?'in':'out', e);
+      }
+    });
+    el.addEventListener('click', e=>{
+      if(e.target.classList.contains('handle')) return;
+      selectedId=c.id;
+      seekTimeline(clipStartTime(clips.indexOf(c)) + 0.001);
+      render();
+    });
+    track.appendChild(el);
+  });
+
+  playhead.style.left = (timelineTime*pxPerSec)+'px';
+  $('timeLabel').textContent = fmt(timelineTime)+' / '+fmt(totalDuration());
+}
+
+/* ============ القص من الأطراف (Trim) ============ */
+function startTrim(clip, edge, e){
+  e.preventDefault(); e.stopPropagation();
+  try{ e.target.setPointerCapture(e.pointerId); }catch(err){}
+  const startX = e.clientX, orig = clip[edge];
+  const move = ev=>{
+    const dx = (ev.clientX-startX)/pxPerSec;
+    if(edge==='in')  clip.in  = Math.min(Math.max(0, orig+dx), clip.out-0.1);
+    else             clip.out = Math.max(Math.min(srcDuration, orig+dx), clip.in+0.1);
+    render();
+  };
+  const up = ()=>{
+    window.removeEventListener('pointermove',move);
+    window.removeEventListener('pointerup',up);
+    window.removeEventListener('pointercancel',up);
+    seekTimeline(Math.min(timelineTime, totalDuration()));
+  };
+  window.addEventListener('pointermove',move);
+  window.addEventListener('pointerup',up);
+  window.addEventListener('pointercancel',up);
+}
+
+/* ============ التنقّل ============ */
+function seekTimeline(t){
+  t = Math.min(Math.max(0,t), Math.max(0,totalDuration()-0.01));
+  timelineTime = t;
+  const hit = clipAt(t);
+  if(hit) player.currentTime = hit.clip.in + hit.local;
+  render();
+}
+ruler.addEventListener('pointerdown', e=>{
+  e.preventDefault();
+  const rect=inner.getBoundingClientRect();
+  const seek = ev=> seekTimeline((ev.clientX-rect.left)/pxPerSec);
+  seek(e);
+  const up=()=>{
+    window.removeEventListener('pointermove',seek);
+    window.removeEventListener('pointerup',up);
+    window.removeEventListener('pointercancel',up);
+  };
+  window.addEventListener('pointermove',seek);
+  window.addEventListener('pointerup',up);
+  window.addEventListener('pointercancel',up);
+});
+
+/* ============ التشغيل ============ */
+function tick(){
+  if(!playing) return;
+  const hit = clipAt(timelineTime);
+  if(!hit){ stopPlay(); return; }
+  const {clip,index} = hit;
+  // زمن التايملاين من زمن الفيديو
+  timelineTime = clipStartTime(index) + (player.currentTime - clip.in);
+  if(player.currentTime >= clip.out - 0.03){
+    if(index < clips.length-1){
+      const nc = clips[index+1];
+      player.currentTime = nc.in;
+      timelineTime = clipStartTime(index+1);
+    } else { stopPlay(); seekTimeline(0); return; }
+  }
+  playhead.style.left=(timelineTime*pxPerSec)+'px';
+  $('timeLabel').textContent = fmt(timelineTime)+' / '+fmt(totalDuration());
+  requestAnimationFrame(tick);
+}
+function startPlay(){
+  if(!clips.length) return;
+  if(timelineTime >= totalDuration()-0.05) seekTimeline(0);
+  playing=true; $('playBtn').textContent='⏸ إيقاف';
+  player.play(); requestAnimationFrame(tick);
+}
+function stopPlay(){
+  playing=false; $('playBtn').textContent='▶ تشغيل'; player.pause();
+}
+$('playBtn').onclick = ()=> playing?stopPlay():startPlay();
+
+/* ============ أدوات التحرير ============ */
+function splitAtPlayhead(){
+  const hit = clipAt(timelineTime);
+  if(!hit) return;
+  const {clip,index,local} = hit;
+  if(local<0.1 || local>(clip.out-clip.in)-0.1) return; // قريب جداً من الطرف
+  const cut = clip.in + local;
+  const right = {id:nextId++, in:cut, out:clip.out};
+  clip.out = cut;
+  clips.splice(index+1,0,right);
+  selectedId = right.id;
+  render();
+}
+function copySelected(){
+  const i = clips.findIndex(c=>c.id===selectedId);
+  if(i<0) return;
+  const c = clips[i];
+  clips.splice(i+1,0,{id:nextId++, in:c.in, out:c.out});
+  render();
+}
+function deleteSelected(){
+  const i = clips.findIndex(c=>c.id===selectedId);
+  if(i<0) return;
+  clips.splice(i,1);
+  selectedId = clips[Math.min(i,clips.length-1)]?.id ?? null;
+  seekTimeline(Math.min(timelineTime, totalDuration()));
+  render();
+}
+$('splitBtn').onclick=splitAtPlayhead;
+$('copyBtn').onclick=copySelected;
+$('delBtn').onclick=deleteSelected;
+
+$('zoom').oninput = e=>{ pxPerSec=+e.target.value; render(); };
+
+document.addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT') return;
+  if(e.code==='Space'){ e.preventDefault(); playing?stopPlay():startPlay(); }
+  else if(e.key==='s'||e.key==='S'||e.key==='س') splitAtPlayhead();
+  else if(e.key==='c'||e.key==='C'||e.key==='ؤ') copySelected();
+  else if(e.key==='Delete'||e.key==='Backspace') deleteSelected();
+});
+
+/* ============ التصدير (WebM) ============ */
+let exportCancelled=false;
+$('cancelExport').onclick=()=>{exportCancelled=true;};
+$('exportBtn').onclick = async ()=>{
+  if(!clips.length) return;
+  stopPlay();
+  exportCancelled=false;
+  $('exportOverlay').classList.add('show');
+  const dur = totalDuration();
+
+  const anyFx = plugins.some(p=>p.enabled);
+  const canDirect = !!(player.captureStream || player.mozCaptureStream);
+  const useCanvas = anyFx || !canDirect;   // سفاري/آيفون قد لا يدعم captureStream للفيديو — نستخدم الكانفس
+  let stream, fxTimer=null;
+
+  if(useCanvas){
+    // تركيب: الفيديو + الإفكتات على كانفس بدقة المصدر
+    const cv=document.createElement('canvas');
+    cv.width=player.videoWidth||1280; cv.height=player.videoHeight||720;
+    const ctx=cv.getContext('2d');
+    // نسخة مستقلة من جزيئات كل بلاجن حتى لا تتأثر معاينة الشاشة
+    plugins.forEach(p=>{ if(p.enabled) p._exportParts=[]; });
+    let last=performance.now();
+    const drawFrame=()=>{
+      const now=performance.now(), dt=Math.min(.05,(now-last)/1000); last=now;
+      drawBaseComposite(ctx,cv.width,cv.height);
+      plugins.forEach(p=>{
+        if(!p.enabled || !p.draw || p.type==='base' || p.type==='transform') return;
+        const keep=p._parts; p._parts=p._exportParts;   // تبديل مؤقت للجزيئات
+        p.draw(ctx,cv.width,cv.height,dt);
+        p._exportParts=p._parts; p._parts=keep;
+      });
+      fxTimer=requestAnimationFrame(drawFrame);
+    };
+    drawFrame();
+    const vTracks=cv.captureStream(30).getVideoTracks();
+    let aTracks=[];
+    if(canDirect){
+      const src=player.captureStream ? player.captureStream() : player.mozCaptureStream();
+      aTracks=src.getAudioTracks();
+    }
+    stream=new MediaStream([...vTracks, ...aTracks]);
+  } else {
+    stream = player.captureStream ? player.captureStream() : player.mozCaptureStream();
+  }
+
+  // اختيار الصيغة المدعومة: WebM على كروم/إيدج، MP4 على سفاري/آيفون
+  const mime=['video/webm;codecs=vp9,opus','video/webm','video/mp4;codecs=avc1','video/mp4']
+    .find(m=>{ try{return MediaRecorder.isTypeSupported(m);}catch(e){return false;} }) || '';
+  const outExt = mime.includes('mp4') ? 'mp4' : 'webm';
+  const rec = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream);
+  const parts=[];
+  rec.ondataavailable = e=>{ if(e.data.size) parts.push(e.data); };
+  const done = new Promise(r=>rec.onstop=r);
+
+  seekTimeline(0);
+  await new Promise(r=>setTimeout(r,150));
+  rec.start(500);
+  playing=true; player.play(); requestAnimationFrame(tick);
+
+  // متابعة التقدّم حتى النهاية
+  await new Promise(res=>{
+    const iv=setInterval(()=>{
+      $('exportPct').textContent = Math.min(99, Math.round(timelineTime/dur*100))+'%';
+      if(!playing || exportCancelled){ clearInterval(iv); res(); }
+    },200);
+  });
+
+  rec.stop(); await done;
+  if(fxTimer) cancelAnimationFrame(fxTimer);
+  $('exportOverlay').classList.remove('show');
+  if(exportCancelled){ stopPlay(); return; }
+
+  const blob = new Blob(parts,{type: mime.includes('mp4')?'video/mp4':'video/webm'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='majancut-export.'+outExt;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+};
+
+window.addEventListener('resize', render);
+
+/* ==================================================
+   🧩 نظام البلاجنز
+   لإضافة بلاجن جديد: أضف كائناً إلى مصفوفة plugins
+   بنفس البنية (id, name, desc, params, draw)
+   ================================================== */
+const plugins = [
+  {
+    id:'bgRemove',
+    type:'base',                 // بلاجن أساسي: يعيد رسم الفيديو نفسه
+    name:'🧍 إزالة الخلفية',
+    desc:'يحدد الشخص بالذكاء الاصطناعي ويمحو الخلفية (يحتاج إنترنت لتحميل النموذج أول مرة)',
+    enabled:false,
+    _status:'',
+    params:{
+      bg:{label:'الخلفية', type:'select', value:'green',
+          options:[['green','أخضر (كروما)'],['black','أسود'],['white','أبيض'],['transparent','شفاف (للمعاينة)']]},
+      smooth:{label:'نعومة الحواف', min:0, max:20, value:6},
+    },
+    onToggle(){ if(this.enabled) ensureSegModel(); },
+  },
+  {
+    id:'quakeFrame',
+    type:'transform',            // بلاجن تحويل: يهزّ الصورة ويرسم إطاراً في نافذة زمنية
+    name:'📱 فريم موبايل + زلزال',
+    desc:'من ثانية البداية حتى النهاية: إطار بمقاس الموبايل (9:16) واهتزاز زلزالي، ثم يعود طبيعياً',
+    enabled:false,
+    params:{
+      start:{label:'ثانية البداية', min:0, max:60, value:2},
+      end:{label:'ثانية النهاية', min:0, max:60, value:5},
+      power:{label:'قوة الزلزال', min:2, max:40, value:14},
+    },
+    isActive(t){ return t>=this.params.start.value && t<=this.params.end.value; },
+  },
+  {
+    id:'colorFx',
+    type:'color',
+    name:'🎨 تصحيح الألوان',
+    desc:'بريسِتات سينمائية جاهزة + تحكم يدوي كامل بالألوان',
+    enabled:false,
+    params:{
+      preset:{label:'البريسِت', type:'select', value:'normal',
+        options:[
+          ['normal','عادي'],
+          ['cinema','سينمائي (Teal & Orange)'],
+          ['vivid','ألوان نابضة (Vivid)'],
+          ['warm','دافئ (غروب)'],
+          ['cold','بارد (شتوي)'],
+          ['vintage','فينتاج (قديم)'],
+          ['bw','أبيض وأسود'],
+          ['noir','نوار (تباين عالي)'],
+          ['dream','حالم (ناعم)'],
+        ]},
+      brightness:{label:'السطوع', min:40, max:180, value:100},
+      contrast:{label:'التباين', min:40, max:180, value:100},
+      saturation:{label:'التشبّع', min:0, max:220, value:100},
+      hue:{label:'درجة اللون', min:0, max:360, value:0},
+      vignette:{label:'فينييت (تعتيم الأطراف)', min:0, max:100, value:0},
+    },
+  },
+  {
+    id:'heartsRain',
+    name:'❤️ مطر القلوب',
+    desc:'قلوب تتساقط فوق الفيديو كأنها مطر',
+    enabled:false,
+    params:{
+      density:{label:'الكثافة', min:5, max:80, value:30},
+      size:{label:'الحجم', min:8, max:50, value:22},
+      speed:{label:'السرعة', min:20, max:200, value:80},
+    },
+    _parts:[],
+    _spawn(w,h,p){
+      return {
+        x:Math.random()*w, y:-30-Math.random()*h*.3,
+        s:(p.size.value*.5)+Math.random()*p.size.value,
+        v:(p.speed.value*.6)+Math.random()*p.speed.value,
+        sway:Math.random()*2*Math.PI, swayAmp:10+Math.random()*25,
+        rot:(Math.random()-.5)*.6, hue:330+Math.random()*30,
+        op:.55+Math.random()*.45,
+      };
+    },
+    draw(ctx,w,h,dt){
+      const p=this.params, target=Math.round(p.density.value*(w*h)/(640*360));
+      while(this._parts.length<target) this._parts.push(this._spawn(w,h,p));
+      if(this._parts.length>target) this._parts.length=target;
+      const scale = Math.max(.4, w/640);
+      for(const q of this._parts){
+        q.y += q.v*scale*dt;
+        q.sway += dt*2;
+        const x = q.x + Math.sin(q.sway)*q.swayAmp*scale;
+        if(q.y > h+40){ Object.assign(q, this._spawn(w,h,p)); q.y=-30; continue; }
+        drawHeart(ctx, x, q.y, q.s*scale, `hsla(${q.hue},85%,60%,${q.op})`, q.rot);
+      }
+    }
+  }
+];
+
+/* ===== 🧍 محرك إزالة الخلفية (MediaPipe Selfie Segmentation) ===== */
+let segModel=null, segLoadState='idle', segMask=null, segBusy=false, lastSegSend=0;
+const segTmp=document.createElement('canvas'), segTmpCtx=segTmp.getContext('2d');
+const bgColors={green:'#00b140', black:'#000000', white:'#ffffff'};
+const bgPlugin = ()=>plugins.find(p=>p.id==='bgRemove');
+
+function setSegStatus(s){ const p=bgPlugin(); if(p){ p._status=s; renderPlugins(); } }
+
+async function ensureSegModel(){
+  if(segModel || segLoadState==='loading') return;
+  segLoadState='loading';
+  setSegStatus('⏳ جاري تحميل نموذج الذكاء الاصطناعي…');
+  try{
+    await new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
+      s.onload=res; s.onerror=()=>rej(new Error('cdn'));
+      document.head.appendChild(s);
+      setTimeout(()=>rej(new Error('timeout')), 20000);
+    });
+    segModel=new SelfieSegmentation({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}`});
+    segModel.setOptions({modelSelection:1});
+    segModel.onResults(r=>{ segMask=r.segmentationMask; segBusy=false; });
+    await segModel.initialize();
+    segLoadState='ready';
+    setSegStatus('✅ النموذج جاهز');
+    setTimeout(()=>setSegStatus(''), 2500);
+  }catch(e){
+    segLoadState='idle'; segModel=null;
+    setSegStatus('❌ تعذّر تحميل النموذج — تأكد من الاتصال بالإنترنت (ولا يعمل داخل المعاينة المعزولة)');
+  }
+}
+
+function segTick(){
+  if(!segModel || segBusy || player.readyState<2) return;
+  const now=performance.now();
+  if(now-lastSegSend < 66) return; // ~15 إطاراً في الثانية للتقطيع (يكفي وسلس)
+  lastSegSend=now; segBusy=true;
+  segModel.send({image:player}).catch(()=>{ segBusy=false; });
+}
+
+// يرسم الفيديو مع محو الخلفية على أي كانفس (المعاينة أو التصدير)
+function drawBgRemoved(ctx,w,h){
+  const p=bgPlugin();
+  if(!segMask || !segModel){ ctx.drawImage(player,0,0,w,h); return; }
+  segTmp.width=w; segTmp.height=h;
+  segTmpCtx.clearRect(0,0,w,h);
+  segTmpCtx.save();
+  const blur=p.params.smooth.value;
+  if(blur>0) segTmpCtx.filter=`blur(${blur}px)`;
+  segTmpCtx.drawImage(segMask,0,0,w,h);
+  segTmpCtx.restore();
+  segTmpCtx.globalCompositeOperation='source-in';
+  segTmpCtx.drawImage(player,0,0,w,h);
+  segTmpCtx.globalCompositeOperation='source-over';
+
+  const bg=p.params.bg.value;
+  if(bg!=='transparent'){ ctx.fillStyle=bgColors[bg]||'#000'; ctx.fillRect(0,0,w,h); }
+  else ctx.clearRect(0,0,w,h);
+  ctx.filter=_colorFilter;      // الفلتر على الشخص فقط — لون الكروما يبقى نقياً
+  ctx.drawImage(segTmp,0,0);
+  ctx.filter='none';
+}
+
+/* ===== 🎨 محرك تصحيح الألوان ===== */
+const colorPresets={
+  normal :{filter:'', tints:[]},
+  cinema :{filter:'contrast(1.12) saturate(1.22)', tints:[['#0e7a8a','soft-light',.35],['#ff8c3b','soft-light',.22]]},
+  vivid  :{filter:'saturate(1.6) contrast(1.15)', tints:[]},
+  warm   :{filter:'saturate(1.1) brightness(1.03)', tints:[['#ff9a3b','soft-light',.32]]},
+  cold   :{filter:'saturate(1.05)', tints:[['#3b7bff','soft-light',.32]]},
+  vintage:{filter:'sepia(.5) contrast(.95) brightness(1.05) saturate(.85)', tints:[['#d4a76a','soft-light',.2]], vig:.35},
+  bw     :{filter:'grayscale(1) contrast(1.05)', tints:[]},
+  noir   :{filter:'grayscale(1) contrast(1.45) brightness(.92)', tints:[], vig:.45},
+  dream  :{filter:'brightness(1.08) saturate(1.15) contrast(.92) blur(0.6px)', tints:[['#ffb7d5','soft-light',.18]]},
+};
+const colPlugin = ()=>plugins.find(p=>p.id==='colorFx' && p.enabled);
+let _colorFilter='none';
+
+function buildColorFilter(){
+  const c=colPlugin();
+  if(!c){ _colorFilter='none'; return; }
+  const p=c.params, pre=colorPresets[p.preset.value]||colorPresets.normal;
+  let f=pre.filter;
+  if(p.brightness.value!==100) f+=` brightness(${p.brightness.value/100})`;
+  if(p.contrast.value!==100)   f+=` contrast(${p.contrast.value/100})`;
+  if(p.saturation.value!==100) f+=` saturate(${p.saturation.value/100})`;
+  if(p.hue.value!==0)          f+=` hue-rotate(${p.hue.value}deg)`;
+  _colorFilter = f.trim()||'none';
+}
+
+// طبقات التلوين والفينييت — تُرسم فوق الفيديو وتحت الإطار/القلوب
+function drawColorGrade(ctx,w,h){
+  const c=colPlugin(); if(!c) return;
+  const pre=colorPresets[c.params.preset.value]||colorPresets.normal;
+  for(const [color,op,alpha] of pre.tints){
+    ctx.save();
+    ctx.globalCompositeOperation=op; ctx.globalAlpha=alpha;
+    ctx.fillStyle=color; ctx.fillRect(0,0,w,h);
+    ctx.restore();
+  }
+  const vig=(c.params.vignette.value/100) + (pre.vig||0);
+  if(vig>0.01){
+    const g=ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*.35, w/2,h/2, Math.max(w,h)*.75);
+    g.addColorStop(0,'rgba(0,0,0,0)');
+    g.addColorStop(1,`rgba(0,0,0,${Math.min(.85,vig)})`);
+    ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+  }
+}
+
+/* ===== 📱 إطار الموبايل ===== */
+function drawPhoneFrame(ctx,w,h){
+  // منطقة 9:16 في المنتصف
+  let fh=h*0.94, fw=fh*9/16;
+  if(fw>w*0.92){ fw=w*0.92; fh=fw*16/9; }
+  const fx0=(w-fw)/2, fy0=(h-fh)/2, r=Math.min(fw,fh)*0.07;
+  // تعتيم خارج الإطار
+  ctx.fillStyle='rgba(0,0,0,.78)';
+  ctx.fillRect(0,0,w,fy0);
+  ctx.fillRect(0,fy0+fh,w,h-fy0-fh);
+  ctx.fillRect(0,fy0,fx0,fh);
+  ctx.fillRect(fx0+fw,fy0,w-fx0-fw,fh);
+  // حدود الهاتف
+  ctx.save();
+  ctx.lineWidth=Math.max(3,w*0.006);
+  ctx.strokeStyle='#f2f2f5';
+  ctx.beginPath();
+  if(ctx.roundRect) ctx.roundRect(fx0,fy0,fw,fh,r); else ctx.rect(fx0,fy0,fw,fh);
+  ctx.stroke();
+  // النوتش العلوي
+  const nw=fw*0.34, nh=Math.max(6,fh*0.022);
+  ctx.fillStyle='#f2f2f5';
+  ctx.beginPath();
+  if(ctx.roundRect) ctx.roundRect(fx0+(fw-nw)/2, fy0+nh*0.8, nw, nh, nh/2); else ctx.rect(fx0+(fw-nw)/2, fy0+nh*0.8, nw, nh);
+  ctx.fill();
+  ctx.restore();
+}
+
+/* ===== دالة التركيب الموحدة (المعاينة + التصدير) =====
+   ترسم: خلفية سوداء ← اهتزاز الزلزال ← الفيديو (أو الفيديو بلا خلفية) ← إطار الموبايل */
+function drawBaseComposite(ctx,w,h){
+  const base = plugins.find(p=>p.type==='base' && p.enabled);
+  const qk   = plugins.find(p=>p.id==='quakeFrame' && p.enabled);
+  const quakeOn = qk && qk.isActive(timelineTime);
+  buildColorFilter();
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,w,h);
+  ctx.save();
+  if(quakeOn){
+    const a = qk.params.power.value * (w/640);
+    ctx.translate((Math.random()-.5)*2*a, (Math.random()-.5)*2*a);
+    ctx.translate(w/2,h/2);
+    ctx.rotate((Math.random()-.5) * 0.004 * qk.params.power.value);
+    ctx.translate(-w/2,-h/2);
+  }
+  if(base){ segTick(); drawBgRemoved(ctx,w,h); }
+  else{
+    ctx.filter=_colorFilter;
+    ctx.drawImage(player,0,0,w,h);
+    ctx.filter='none';
+  }
+  ctx.restore();
+  drawColorGrade(ctx,w,h);
+  if(quakeOn) drawPhoneFrame(ctx,w,h);
+}
+// هل نحتاج الرسم عبر الكانفس بدل عرض الفيديو مباشرة؟
+const needsCanvasBase = ()=> plugins.some(p=>p.enabled && (p.type==='base'||p.type==='transform'||p.type==='color'));
+
+function drawHeart(ctx,x,y,s,color,rot){
+  ctx.save();
+  ctx.translate(x,y); ctx.rotate(rot);
+  ctx.scale(s/24, s/24);
+  ctx.beginPath();
+  ctx.moveTo(0,7);
+  ctx.bezierCurveTo(-1,3,-5,-1,-9,-1);
+  ctx.bezierCurveTo(-15,-1,-15,7,-9,12);
+  ctx.bezierCurveTo(-5,15.5,0,19,0,19);
+  ctx.bezierCurveTo(0,19,5,15.5,9,12);
+  ctx.bezierCurveTo(15,7,15,-1,9,-1);
+  ctx.bezierCurveTo(5,-1,1,3,0,7);
+  ctx.closePath();
+  ctx.fillStyle=color;
+  ctx.shadowColor='rgba(255,80,140,.4)'; ctx.shadowBlur=6;
+  ctx.fill();
+  ctx.restore();
+}
+
+/* ===== واجهة البلاجنز ===== */
+const pluginList=$('pluginList');
+function renderPlugins(){
+  pluginList.innerHTML='';
+  $('emptyPlugins').style.display = plugins.length ? 'none' : 'block';
+  plugins.forEach(pl=>{
+    const box=document.createElement('div');
+    box.className='plugin'+(pl.enabled?' on':'');
+    const row=document.createElement('div'); row.className='row';
+    row.innerHTML=`<span class="pname">${pl.name}</span>`;
+    const sw=document.createElement('div'); sw.className='switch';
+    sw.onclick=()=>{ pl.enabled=!pl.enabled; if(pl.onToggle) pl.onToggle(); renderPlugins(); };
+    row.appendChild(sw); box.appendChild(row);
+    const desc=document.createElement('div'); desc.className='pdesc'; desc.textContent=pl.desc;
+    box.appendChild(desc);
+    if(pl._status){
+      const st=document.createElement('div'); st.className='pdesc';
+      st.style.color='var(--accent)'; st.textContent=pl._status;
+      box.appendChild(st);
+    }
+    const params=document.createElement('div'); params.className='params';
+    Object.entries(pl.params).forEach(([key,cfg])=>{
+      const lab=document.createElement('label');
+      lab.textContent=cfg.label;
+      let ctl;
+      if(cfg.type==='select'){
+        ctl=document.createElement('select');
+        ctl.style.cssText='background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:.75rem;';
+        cfg.options.forEach(([val,txt])=>{
+          const o=document.createElement('option'); o.value=val; o.textContent=txt;
+          if(val===cfg.value) o.selected=true;
+          ctl.appendChild(o);
+        });
+        ctl.onchange=e=>{ cfg.value=e.target.value; };
+      }else{
+        ctl=document.createElement('input');
+        ctl.type='range'; ctl.min=cfg.min; ctl.max=cfg.max; ctl.value=cfg.value;
+        ctl.oninput=e=>{ cfg.value=+e.target.value; };
+      }
+      lab.appendChild(ctl); params.appendChild(lab);
+    });
+    box.appendChild(params);
+    pluginList.appendChild(box);
+  });
+}
+renderPlugins();
+function setPanel(open){
+  $('pluginPanel').classList.toggle('hidden', !open);
+  document.body.classList.toggle('panelOpen', open);
+}
+setPanel(window.innerWidth>=900);           // على الموبايل تبدأ مغلقة
+$('pluginToggle').onclick = ()=> setPanel($('pluginPanel').classList.contains('hidden'));
+$('pluginClose').onclick  = ()=> setPanel(false);
+$('panelBackdrop').onclick= ()=> setPanel(false);
+
+/* ===== طبقة الإفكتات فوق المعاينة ===== */
+const fx=$('fxCanvas'), fxCtx=fx.getContext('2d');
+function fitOverlay(){
+  const wrap=$('previewWrap').getBoundingClientRect();
+  const r=player.getBoundingClientRect();
+  if(r.width<2){ fx.width=0; return; }
+  fx.style.left=(r.left-wrap.left)+'px';
+  fx.style.top=(r.top-wrap.top)+'px';
+  fx.style.width=r.width+'px'; fx.style.height=r.height+'px';
+  fx.width=Math.round(r.width); fx.height=Math.round(r.height);
+}
+window.addEventListener('resize', fitOverlay);
+player.addEventListener('loadedmetadata', fitOverlay);
+
+let lastFx=performance.now();
+function fxLoop(now){
+  const dt=Math.min(.05,(now-lastFx)/1000); lastFx=now;
+  if(fx.width>0 && srcDuration>0){
+    if(needsCanvasBase()){
+      player.style.opacity='0';
+      drawBaseComposite(fxCtx,fx.width,fx.height);
+    }else{
+      player.style.opacity='1';
+      fxCtx.clearRect(0,0,fx.width,fx.height);
+    }
+    plugins.forEach(pl=>{ if(pl.enabled && pl.draw && pl.type!=='base' && pl.type!=='transform') pl.draw(fxCtx,fx.width,fx.height,dt); });
+  } else if(player.videoWidth) fitOverlay();
+  requestAnimationFrame(fxLoop);
+}
+requestAnimationFrame(fxLoop);
+</script>
+</body>
+</html>
