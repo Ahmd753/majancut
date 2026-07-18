@@ -233,7 +233,7 @@
 <body>
 
 <header>
-  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.5</span></h1>
+  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.6</span></h1>
   <button class="btn" id="importBtn">📂 استيراد فيديو</button>
   <button class="btn" id="newBtn" title="مشروع جديد — مسح الكل">🆕</button>
   <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi,.wmv,.flv,.mpg,.mpeg,.3gp,.3g2,.ts,.m2ts,.mts,.vob,.ogv,.divx,.asf,.rm,.rmvb" hidden>
@@ -1256,6 +1256,23 @@ area.addEventListener('pointermove', e=>{
 const pinchEnd=e=>{ pinchPts.delete(e.pointerId); pinchBase=0; };
 area.addEventListener('pointerup',pinchEnd);
 area.addEventListener('pointercancel',pinchEnd);
+
+/* 🔄 فاحص التحديثات — يكتشف النسخ الأحدث رغم كاش المتصفح */
+const APP_VER='2.6';
+setTimeout(async ()=>{
+  try{
+    const r=await fetch('version.txt?_='+Date.now(), {cache:'no-store'});
+    if(!r.ok) return;
+    const latest=(await r.text()).trim();
+    if(latest && latest!==APP_VER){
+      const bar=document.createElement('div');
+      bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:100;background:var(--accent);color:#181206;padding:10px 16px;text-align:center;font-weight:700;cursor:pointer;';
+      bar.textContent='🔄 نسخة جديدة متاحة (v'+latest+') — اضغط هنا للتحديث';
+      bar.onclick=()=>{ location.href=location.pathname+'?v='+latest+'_'+Date.now(); };
+      document.body.prepend(bar);
+    }
+  }catch(e){}
+}, 2500);
 
 window.addEventListener('resize', render);
 
