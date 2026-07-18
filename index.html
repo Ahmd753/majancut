@@ -233,7 +233,7 @@
 <body>
 
 <header>
-  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.1</span></h1>
+  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.2</span></h1>
   <button class="btn" id="importBtn">📂 استيراد فيديو</button>
   <button class="btn" id="newBtn" title="مشروع جديد — مسح الكل">🆕</button>
   <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi,.wmv,.flv,.mpg,.mpeg,.3gp,.3g2,.ts,.m2ts,.mts,.vob,.ogv,.divx,.asf,.rm,.rmvb" hidden>
@@ -1235,7 +1235,7 @@ const plugins = [
     id:'bgRemove',
     type:'base',                 // بلاجن أساسي: يعيد رسم الفيديو نفسه
     name:'🧍 إزالة الخلفية',
-    desc:'يحدد الشخص بالذكاء الاصطناعي ويمحو الخلفية (يحتاج إنترنت لتحميل النموذج أول مرة)',
+    desc:'يحدد الشخص تلقائياً ويمحو الخلفية — محرك مدمج في البرنامج وجاهز فوراً',
     enabled:false,
     _status:'',
     params:{
@@ -1249,7 +1249,7 @@ const plugins = [
     id:'motionEcho',
     type:'person',               // يحتاج محرك تحديد الشخص
     name:'👻 صدى الحركة',
-    desc:'نسخ شبحية من الشخص تتبع حركته وتتلاشى — إحساس الأنمي (يحمّل نموذج الذكاء الاصطناعي أول مرة)',
+    desc:'نسخ شبحية من الشخص تتبع حركته وتتلاشى — إحساس الأنمي',
     enabled:false,
     _status:'',
     params:{
@@ -1361,30 +1361,40 @@ function setSegStatus(s){
   renderPlugins();
 }
 
-async function ensureSegModel(){
+// النموذج مدمج داخل ملفات الموقع (./mediapipe/) — لا يحتاج أي سيرفر خارجي
+function loadScript(src){
+  return new Promise((res,rej)=>{
+    const sc=document.createElement('script');
+    sc.src=src; sc.onload=res; sc.onerror=()=>rej(new Error('load'));
+    document.head.appendChild(sc);
+    setTimeout(()=>rej(new Error('timeout')), 20000);
+  });
+}
+async function ensureSegModel(quiet){
   if(segModel || segLoadState==='loading') return;
   segLoadState='loading';
-  setSegStatus('⏳ جاري تحميل نموذج الذكاء الاصطناعي…');
-  try{
-    await new Promise((res,rej)=>{
-      const s=document.createElement('script');
-      s.src='https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
-      s.onload=res; s.onerror=()=>rej(new Error('cdn'));
-      document.head.appendChild(s);
-      setTimeout(()=>rej(new Error('timeout')), 20000);
-    });
-    segModel=new SelfieSegmentation({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${f}`});
-    segModel.setOptions({modelSelection:1});
-    segModel.onResults(r=>{ segMask=r.segmentationMask; segBusy=false; });
-    await segModel.initialize();
-    segLoadState='ready';
-    setSegStatus('✅ النموذج جاهز');
-    setTimeout(()=>setSegStatus(''), 2500);
-  }catch(e){
-    segLoadState='idle'; segModel=null;
-    setSegStatus('❌ تعذّر تحميل النموذج — تأكد من الاتصال بالإنترنت (ولا يعمل داخل المعاينة المعزولة)');
+  if(!quiet) setSegStatus('⏳ جاري تجهيز محرك تحديد الشخص…');
+  // المسار المدمج أولاً، ثم CDN كخطة بديلة (للنسخة المحمّلة كملف)
+  const bases=['./mediapipe/','https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/'];
+  for(const base of bases){
+    try{
+      if(typeof SelfieSegmentation==='undefined')
+        await loadScript(base+'selfie_segmentation.js');
+      segModel=new SelfieSegmentation({locateFile:f=> base+f});
+      segModel.setOptions({modelSelection:1});
+      segModel.onResults(r=>{ segMask=r.segmentationMask; segBusy=false; });
+      await segModel.initialize();
+      segLoadState='ready';
+      setSegStatus('✅ محرك تحديد الشخص جاهز');
+      setTimeout(()=>setSegStatus(''), 2500);
+      return;
+    }catch(e){ segModel=null; }
   }
+  segLoadState='idle';
+  setSegStatus('❌ تعذّر تجهيز المحرك — أعد تحميل الصفحة');
 }
+// تجهيز مسبق صامت عند فتح البرنامج — يكون جاهزاً قبل ما تحتاجه
+setTimeout(()=>{ try{ ensureSegModel(true); }catch(e){} }, 2000);
 
 function segTick(){
   if(!segModel || segBusy || player.readyState<2) return;
