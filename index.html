@@ -196,7 +196,13 @@
     position:absolute; top:0; width:10px; height:100%; z-index:3; cursor:ew-resize;
     background:rgba(232,178,58,0); transition:background .15s;
   }
-  .clip.selected .handle{background:rgba(232,178,58,.5);}
+  .clip.selected .handle, .ovclip.selected .handle{
+    background:#fff; border-radius:4px; width:12px;
+  }
+  .clip.selected .handle::after, .ovclip.selected .handle::after{
+    content:""; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:3px; height:38%; background:#555; border-radius:2px;
+  }
   .handle.left{left:0; border-radius:6px 0 0 6px;}
   .handle.right{right:0; border-radius:0 6px 6px 0;}
 
@@ -227,7 +233,7 @@
 <body>
 
 <header>
-  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.0</span></h1>
+  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.1</span></h1>
   <button class="btn" id="importBtn">📂 استيراد فيديو</button>
   <button class="btn" id="newBtn" title="مشروع جديد — مسح الكل">🆕</button>
   <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi,.wmv,.flv,.mpg,.mpeg,.3gp,.3g2,.ts,.m2ts,.mts,.vob,.ogv,.divx,.asf,.rm,.rmvb" hidden>
@@ -278,6 +284,17 @@
     <button class="btn" id="addLayerBtn" title="إضافة طبقة فيديو جديدة">➕ طبقة</button>
   </div>
   <div class="zoomCtl">🔍 تكبير <input type="range" id="zoom" min="0" max="100" value="70"></div>
+</div>
+
+<div id="clipBar" style="display:none; padding:6px 16px; background:var(--panel); border-top:1px solid var(--line); align-items:center; gap:14px; font-size:.8rem; color:var(--dim);">
+  <span>⚡ السرعة</span>
+  <select id="spdSel" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 8px;">
+    <option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="0.75">0.75x</option>
+    <option value="1" selected>1x عادي</option><option value="1.5">1.5x</option><option value="2">2x</option><option value="3">3x</option>
+  </select>
+  <span>🔊 الصوت</span>
+  <input type="range" id="volRng" min="0" max="200" value="100" style="width:120px">
+  <span id="volLbl">100%</span>
 </div>
 
 <div id="timelineArea">
@@ -343,12 +360,13 @@ const ruler=$('ruler'), track=$('track'), inner=$('timelineInner'),
       playhead=$('playhead'), area=$('timelineArea');
 
 /* ============ أدوات ============ */
-const totalDuration = () => clips.reduce((s,c)=>s + (c.out-c.in), 0);
-const clipStartTime = i => clips.slice(0,i).reduce((s,c)=>s+(c.out-c.in),0);
+const clipDur = c => (c.out-c.in)/(c.speed||1);
+const totalDuration = () => clips.reduce((s,c)=>s + clipDur(c), 0);
+const clipStartTime = i => clips.slice(0,i).reduce((s,c)=>s+clipDur(c),0);
 function clipAt(t){
   let acc=0;
   for(let i=0;i<clips.length;i++){
-    const d=clips[i].out-clips[i].in;
+    const d=clipDur(clips[i]);
     if(t < acc+d - 1e-4 || i===clips.length-1) return {clip:clips[i], index:i, local:t-acc};
     acc+=d;
   }
@@ -655,7 +673,7 @@ function render(){
   const laneV=document.createElement('div'); laneV.className='lane';
   laneV.innerHTML='<span class="laneTag">🎬 V1</span>';
   clips.forEach((c,i)=>{
-    const st=clipStartTime(i), d=c.out-c.in;
+    const st=clipStartTime(i), d=clipDur(c);
     const S=sources[c.src];
     const el=document.createElement('div');
     el.className='clip'+(sel&&sel.kind==='main'&&sel.cid===c.id?' selected':'');
@@ -668,22 +686,18 @@ function render(){
     });
     el.appendChild(tw);
     const lb=document.createElement('div'); lb.className='label';
-    lb.textContent=(sources.length>1?'🎞'+(c.src+1)+' · ':'')+fmt(d);
+    lb.textContent=(sources.length>1?'🎞'+(c.src+1)+' · ':'')+fmt(d)+((c.speed&&c.speed!==1)?' ⚡'+c.speed+'x':'');
     el.appendChild(lb);
     const hl=document.createElement('div'); hl.className='handle left';
     const hr=document.createElement('div'); hr.className='handle right';
     el.appendChild(hl); el.appendChild(hr);
 
     el.addEventListener('pointerdown', e=>{
-      sel={kind:'main', cid:c.id}; render();
-      if(e.target.classList.contains('handle'))
-        startTrim(c, e.target.classList.contains('left')?'in':'out', e);
-    });
-    el.addEventListener('click', e=>{
-      if(e.target.classList.contains('handle')) return;
       sel={kind:'main', cid:c.id};
-      seekTimeline(clipStartTime(clips.indexOf(c)) + 0.001);
-      render();
+      if(e.target.classList.contains('handle')){
+        render();
+        startTrim(c, e.target.classList.contains('left')?'in':'out', e);
+      } else startReorder(c, el, e);
     });
     laneV.appendChild(el);
   });
@@ -693,7 +707,7 @@ function render(){
   const laneA=document.createElement('div'); laneA.className='lane audio';
   laneA.innerHTML='<span class="laneTag">🔊 A1</span>';
   clips.forEach((c,i)=>{
-    const st=clipStartTime(i), d=c.out-c.in;
+    const st=clipStartTime(i), d=clipDur(c);
     const a=document.createElement('div');
     a.className='aclip'+(c.audioOff?' muted':'');
     a.style.left=(st*pxPerSec)+'px';
@@ -757,6 +771,7 @@ function render(){
 
   playhead.style.left = (timelineTime*pxPerSec)+'px';
   $('timeLabel').textContent = fmt(timelineTime)+' / '+fmt(Math.max(totalDuration(),overlayEnd()));
+  updateClipBar();
 }
 
 // نهاية آخر مقطع أوفرلاي (قد يتجاوز طول V1)
@@ -766,12 +781,57 @@ function overlayEnd(){
   return m;
 }
 
+/* ===== إعادة ترتيب مقاطع V1 بالسحب (زي كابكات) ===== */
+let didDrag=false;
+function startReorder(clip, el, e){
+  e.preventDefault();
+  try{ el.setPointerCapture(e.pointerId); }catch(err){}
+  const sx=e.clientX; didDrag=false;
+  const mv=ev=>{
+    const dx=ev.clientX-sx;
+    if(!didDrag && Math.abs(dx)<10) return;   // بداية السحب بعد 10px
+    didDrag=true;
+    el.style.transform='translateX('+dx+'px)';
+    el.style.zIndex=20; el.style.opacity=.85;
+  };
+  const up=ev=>{
+    window.removeEventListener('pointermove',mv);
+    window.removeEventListener('pointerup',up);
+    window.removeEventListener('pointercancel',up);
+    el.style.transform=''; el.style.zIndex=''; el.style.opacity='';
+    if(didDrag){
+      // موضع الإفلات → فهرس جديد
+      const rect=inner.getBoundingClientRect();
+      const t=(ev.clientX-rect.left)/pxPerSec;
+      const from=clips.indexOf(clip);
+      let to=0, acc=0;
+      for(let i=0;i<clips.length;i++){ if(i===from) continue; const d=clipDur(clips[i]); if(t>acc+d/2) to++; acc+=d; }
+      clips.splice(from,1); clips.splice(to,0,clip);
+      seekTimeline(Math.min(timelineTime,totalDuration()));
+    } else {
+      seekTimeline(clipStartTime(clips.indexOf(clip)) + 0.001);
+    }
+    render();
+  };
+  window.addEventListener('pointermove',mv);
+  window.addEventListener('pointerup',up);
+  window.addEventListener('pointercancel',up);
+}
+
 /* ===== سحب وقص مقاطع الأوفرلاي ===== */
 function startOvMove(clip,e){
   e.preventDefault();
   try{ e.target.setPointerCapture(e.pointerId); }catch(err){}
   const sx=e.clientX, orig=clip.start;
-  const mv=ev=>{ clip.start=Math.max(0, orig+(ev.clientX-sx)/pxPerSec); render(); };
+  const mv=ev=>{
+    let ns=Math.max(0, orig+(ev.clientX-sx)/pxPerSec);
+    // سنابينج: يلتصق بالمؤشر وبداية التايملاين وحدود مقاطع V1
+    const snapTh=8/pxPerSec;
+    const cands=[0, timelineTime];
+    clips.forEach((mc,i)=>{ cands.push(clipStartTime(i), clipStartTime(i)+clipDur(mc)); });
+    for(const cd of cands){ if(Math.abs(ns-cd)<snapTh){ ns=cd; break; } }
+    clip.start=ns; render();
+  };
   const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); window.removeEventListener('pointercancel',up); syncOverlays(timelineTime,playing); };
   window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); window.addEventListener('pointercancel',up);
 }
@@ -799,7 +859,7 @@ function startTrim(clip, edge, e){
   const startX = e.clientX, orig = clip[edge];
   const maxOut = sources[clip.src] ? sources[clip.src].duration : orig;
   const move = ev=>{
-    const dx = (ev.clientX-startX)/pxPerSec;
+    const dx = (ev.clientX-startX)/pxPerSec * (clip.speed||1);
     if(edge==='in')  clip.in  = Math.min(Math.max(0, orig+dx), clip.out-0.1);
     else             clip.out = Math.max(Math.min(maxOut, orig+dx), clip.in+0.1);
     render();
@@ -821,7 +881,7 @@ function seekTimeline(t){
   timelineTime = t;
   const hit = clipAt(t);
   if(hit){
-    const tv = hit.clip.in + hit.local;
+    const tv = hit.clip.in + hit.local*(hit.clip.speed||1);
     if(hit.clip.src !== activeSrc) switchSrc(hit.clip.src, ()=>{ player.currentTime = tv; });
     else player.currentTime = tv;
   }
@@ -939,7 +999,7 @@ function setGain(el,v){
 }
 function applyAudioGains(){
   const hit=clipAt(timelineTime);
-  setGain(player, hit&&hit.clip.audioOff ? 0 : 1);
+  setGain(player, (hit&&hit.clip.audioOff) ? 0 : (hit?((hit.clip.vol??100)/100):1));
   overlays.forEach(tr=>{
     const el=ovEls.get(tr.id);
     if(el) setGain(el, el._active&&!el._active.audioOff ? 1 : 0);
@@ -953,8 +1013,9 @@ function tick(){
   const hit = clipAt(timelineTime);
   if(!hit){ stopPlay(); return; }
   const {clip,index} = hit;
-  // زمن التايملاين من زمن الفيديو
-  timelineTime = clipStartTime(index) + (player.currentTime - clip.in);
+  player.playbackRate = clip.speed||1;
+  // زمن التايملاين من زمن الفيديو (مع مراعاة السرعة)
+  timelineTime = clipStartTime(index) + (player.currentTime - clip.in)/(clip.speed||1);
   if(player.currentTime >= clip.out - 0.03){
     if(index < clips.length-1){
       const nc = clips[index+1];
@@ -969,6 +1030,10 @@ function tick(){
   }
   syncOverlays(timelineTime, true);
   playhead.style.left=(timelineTime*pxPerSec)+'px';
+  // تتبع تلقائي: أبقِ المؤشر ظاهراً
+  const px=timelineTime*pxPerSec;
+  if(px < area.scrollLeft+50 || px > area.scrollLeft+area.clientWidth-100)
+    area.scrollLeft = Math.max(0, px - area.clientWidth*0.35);
   $('timeLabel').textContent = fmt(timelineTime)+' / '+fmt(Math.max(totalDuration(),overlayEnd()));
   requestAnimationFrame(tick);
 }
@@ -994,8 +1059,8 @@ function splitAtPlayhead(){
   if(!hit) return;
   const {clip,index,local} = hit;
   if(local<0.1 || local>(clip.out-clip.in)-0.1) return; // قريب جداً من الطرف
-  const cut = clip.in + local;
-  const right = {id:nextId++, src:clip.src, in:cut, out:clip.out, audioOff:clip.audioOff};
+  const cut = clip.in + local*(clip.speed||1);
+  const right = {id:nextId++, src:clip.src, in:cut, out:clip.out, audioOff:clip.audioOff, speed:clip.speed, vol:clip.vol};
   clip.out = cut;
   clips.splice(index+1,0,right);
   sel = {kind:'main', cid:right.id};
@@ -1004,7 +1069,7 @@ function splitAtPlayhead(){
 function copySelected(){
   const c = selMainClip(); if(!c) return;
   const i = clips.indexOf(c);
-  clips.splice(i+1,0,{id:nextId++, src:c.src, in:c.in, out:c.out, audioOff:c.audioOff});
+  clips.splice(i+1,0,{id:nextId++, src:c.src, in:c.in, out:c.out, audioOff:c.audioOff, speed:c.speed, vol:c.vol});
   render();
 }
 function deleteSelected(){
@@ -1025,6 +1090,19 @@ $('splitBtn').onclick=splitAtPlayhead;
 $('copyBtn').onclick=copySelected;
 $('delBtn').onclick=deleteSelected;
 $('addLayerBtn').onclick=addOverlayTrack;
+
+/* شريط المقطع المحدد — سرعة وصوت زي كابكات */
+function updateClipBar(){
+  const c=selMainClip();
+  const bar=$('clipBar');
+  if(!c){ bar.style.display='none'; return; }
+  bar.style.display='flex';
+  $('spdSel').value=String(c.speed||1);
+  $('volRng').value=c.vol??100;
+  $('volLbl').textContent=(c.vol??100)+'%';
+}
+$('spdSel').onchange=e=>{ const c=selMainClip(); if(c){ c.speed=+e.target.value; render(); seekTimeline(Math.min(timelineTime,totalDuration())); } };
+$('volRng').oninput=e=>{ const c=selMainClip(); if(c){ c.vol=+e.target.value; $('volLbl').textContent=c.vol+'%'; applyAudioGains(); } };
 
 $('zoom').oninput = e=>{ zoomVal=+e.target.value; render(); };
 
@@ -1118,6 +1196,32 @@ $('exportBtn').onclick = async ()=>{
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),5000);
 };
+
+/* قرصة الأصابع لتكبير/تصغير التايملاين (موبايل) */
+const pinchPts=new Map();
+let pinchBase=0, pinchZoom0=70;
+area.addEventListener('pointerdown', e=>{
+  if(e.pointerType!=='touch') return;
+  pinchPts.set(e.pointerId, e.clientX);
+  if(pinchPts.size===2){
+    const [a,b]=[...pinchPts.values()];
+    pinchBase=Math.abs(a-b); pinchZoom0=zoomVal;
+  }
+});
+area.addEventListener('pointermove', e=>{
+  if(!pinchPts.has(e.pointerId)) return;
+  pinchPts.set(e.pointerId, e.clientX);
+  if(pinchPts.size===2 && pinchBase>10){
+    const [a,b]=[...pinchPts.values()];
+    const ratio=Math.abs(a-b)/pinchBase;
+    zoomVal=Math.max(0, Math.min(100, pinchZoom0 + Math.log2(ratio)*25));
+    $('zoom').value=zoomVal;
+    render();
+  }
+});
+const pinchEnd=e=>{ pinchPts.delete(e.pointerId); pinchBase=0; };
+area.addEventListener('pointerup',pinchEnd);
+area.addEventListener('pointercancel',pinchEnd);
 
 window.addEventListener('resize', render);
 
