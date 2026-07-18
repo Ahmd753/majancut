@@ -893,6 +893,22 @@ const plugins = [
     onToggle(){ if(this.enabled) ensureSegModel(); },
   },
   {
+    id:'motionEcho',
+    type:'person',               // يحتاج محرك تحديد الشخص
+    name:'👻 صدى الحركة',
+    desc:'نسخ شبحية من الشخص تتبع حركته وتتلاشى — إحساس الأنمي (يحمّل نموذج الذكاء الاصطناعي أول مرة)',
+    enabled:false,
+    _status:'',
+    params:{
+      count:{label:'عدد الأصداء', min:2, max:8, value:4},
+      gap:{label:'المسافة بين الأصداء (مللي ثانية)', min:50, max:250, value:100},
+      strength:{label:'قوة الظهور', min:20, max:100, value:70},
+      tint:{label:'لون الأصداء', type:'select', value:'blue',
+        options:[['none','طبيعي'],['blue','أزرق نيون'],['gold','ذهبي'],['red','أحمر'],['purple','بنفسجي']]},
+    },
+    onToggle(){ if(this.enabled) ensureSegModel(); },
+  },
+  {
     id:'glitchFx',
     type:'post',                 // بلاجن لاحق: يشوّه الإطار النهائي بعد كل الطبقات
     name:'📺 جليتش سايبر',
@@ -987,7 +1003,10 @@ const segTmp=document.createElement('canvas'), segTmpCtx=segTmp.getContext('2d')
 const bgColors={green:'#00b140', black:'#000000', white:'#ffffff'};
 const bgPlugin = ()=>plugins.find(p=>p.id==='bgRemove');
 
-function setSegStatus(s){ const p=bgPlugin(); if(p){ p._status=s; renderPlugins(); } }
+function setSegStatus(s){
+  plugins.forEach(p=>{ if(p.id==='bgRemove'||p.id==='motionEcho') p._status=s; });
+  renderPlugins();
+}
 
 async function ensureSegModel(){
   if(segModel || segLoadState==='loading') return;
@@ -1124,6 +1143,60 @@ function drawColorGrade(ctx,w,h){
   }
 }
 
+/* ===== 👻 محرك صدى الحركة ===== */
+const echoTints={blue:'#2bd2ff', gold:'#ffcf4d', red:'#ff3355', purple:'#b26bff'};
+const ECHO_W=426, ECHO_H=240;         // دقة خفيفة للأصداء — تكفي وتحافظ على الأداء
+let echoFrames=[], echoLast=0;
+const echoCut=document.createElement('canvas'), echoCutCtx=echoCut.getContext('2d');
+function drawEchoes(ctx,w,h){
+  const ep=plugins.find(p=>p.id==='motionEcho' && p.enabled);
+  if(!ep){ if(echoFrames.length) echoFrames=[]; return; }
+  segTick();
+  if(!segMask || !segModel) return;
+  const P=ep.params, now=performance.now();
+
+  // التقاط قصاصة جديدة للشخص كل فترة
+  if(now-echoLast >= P.gap.value){
+    echoLast=now;
+    const reuse = echoFrames.length>=P.count.value ? echoFrames.shift().c : document.createElement('canvas');
+    reuse.width=ECHO_W; reuse.height=ECHO_H;
+    const cc=reuse.getContext('2d');
+    cc.clearRect(0,0,ECHO_W,ECHO_H);
+    cc.globalCompositeOperation='source-over';
+    cc.drawImage(segMask,0,0,ECHO_W,ECHO_H);
+    cc.globalCompositeOperation='source-in';
+    cc.drawImage(player,0,0,ECHO_W,ECHO_H);
+    const tint=P.tint.value;
+    if(tint!=='none' && echoTints[tint]){
+      cc.globalCompositeOperation='source-atop';
+      cc.globalAlpha=.65; cc.fillStyle=echoTints[tint];
+      cc.fillRect(0,0,ECHO_W,ECHO_H);
+      cc.globalAlpha=1; cc.globalCompositeOperation='source-over';
+    }
+    echoFrames.push({c:reuse});
+  }
+  while(echoFrames.length>P.count.value) echoFrames.shift();
+
+  // رسم الأصداء: الأقدم أخفت — تأثير التلاشي
+  const n=echoFrames.length;
+  for(let i=0;i<n;i++){
+    ctx.save();
+    ctx.globalAlpha=((i+1)/(n+1)) * (P.strength.value/100);
+    ctx.drawImage(echoFrames[i].c,0,0,w,h);
+    ctx.restore();
+  }
+
+  // إعادة رسم الشخص الحالي بدقة كاملة فوق الأصداء ليبقى حاداً
+  echoCut.width=w; echoCut.height=h;
+  echoCutCtx.clearRect(0,0,w,h);
+  echoCutCtx.globalCompositeOperation='source-over';
+  echoCutCtx.drawImage(segMask,0,0,w,h);
+  echoCutCtx.globalCompositeOperation='source-in';
+  echoCutCtx.drawImage(player,0,0,w,h);
+  echoCutCtx.globalCompositeOperation='source-over';
+  ctx.drawImage(echoCut,0,0);
+}
+
 /* ===== 📺 محرك الجلتش ===== */
 const gTmp=document.createElement('canvas'), gCtx=gTmp.getContext('2d');
 const gTint=document.createElement('canvas'), gTintCtx=gTint.getContext('2d');
@@ -1239,11 +1312,12 @@ function drawBaseComposite(ctx,w,h,forExport){
   ctx.restore();
   if(!CTX_FILTER_OK && forExport) applyFilterApprox(ctx,w,h);  // بديل الآيفون في التصدير
   drawColorGrade(ctx,w,h);
+  drawEchoes(ctx,w,h);          // أصداء الشخص فوق التدرج وتحت الإطار
   if(quakeOn) drawPhoneFrame(ctx,w,h);
   drawGlitch(ctx,w,h);          // الجلتش آخر طبقة — يشوّه كل ما تحته
 }
 // هل نحتاج الرسم عبر الكانفس بدل عرض الفيديو مباشرة؟
-const needsCanvasBase = ()=> plugins.some(p=>p.enabled && (p.type==='base'||p.type==='transform'||p.type==='color'||p.type==='post'));
+const needsCanvasBase = ()=> plugins.some(p=>p.enabled && (p.type==='base'||p.type==='transform'||p.type==='color'||p.type==='post'||p.type==='person'));
 
 function drawHeart(ctx,x,y,s,color,rot){
   ctx.save();
