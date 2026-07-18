@@ -145,7 +145,7 @@
   /* ===== Timeline ===== */
   #timelineArea{
     height:190px; background:var(--panel2); border-top:1px solid var(--line);
-    overflow-x:auto; overflow-y:hidden; position:relative; direction:ltr;
+    overflow-x:auto; overflow-y:auto; position:relative; direction:ltr;
   }
   #timelineInner{position:relative; height:100%; min-width:100%;}
   #ruler{
@@ -156,9 +156,30 @@
     position:absolute; top:0; height:100%; border-left:1px solid #3a3a48;
     color:var(--dim); font-size:.68rem; padding:3px 0 0 4px; white-space:nowrap;
   }
-  #track{
-    position:relative; height:96px; margin-top:18px;
+  #track{position:relative; margin-top:14px; padding-bottom:8px;}
+  .lane{position:relative; height:64px; margin-bottom:6px;}
+  .lane.audio{height:24px; margin-top:-4px;}
+  .laneTag{
+    position:absolute; top:2px; right:auto; left:2px; z-index:4;
+    background:rgba(20,20,26,.85); color:var(--dim); font-size:.62rem;
+    padding:1px 7px; border-radius:5px; border:1px solid var(--line); pointer-events:auto;
   }
+  .laneTag button{background:none;border:none;color:var(--accent);cursor:pointer;font-size:.72rem;padding:0 2px;}
+  .aclip{
+    position:absolute; top:0; height:100%; border-radius:6px; cursor:pointer;
+    background:repeating-linear-gradient(90deg,#0e6b5e 0 3px,#12897a 3px 6px);
+    border:1.5px solid transparent; display:flex; align-items:center; justify-content:center;
+    font-size:.6rem; color:#c8fff4; overflow:hidden; white-space:nowrap;
+  }
+  .aclip.muted{background:#2a2a33; color:#777; text-decoration:line-through;}
+  .aclip.selected{border-color:var(--accent);}
+  .ovclip{
+    position:absolute; top:0; height:100%; background:#4d2b4a;
+    border:2px solid transparent; border-radius:8px; overflow:hidden; cursor:grab;
+    display:flex; align-items:flex-end;
+  }
+  .ovclip.selected{border-color:var(--accent); box-shadow:0 0 0 2px rgba(232,178,58,.25);}
+  .ovclip .label{position:relative;z-index:2;font-size:.66rem;padding:2px 6px;direction:rtl;background:rgba(0,0,0,.55);border-radius:0 6px 0 0;color:#fff;}
   .clip{
     position:absolute; top:0; height:100%; background:var(--clip);
     border:2px solid transparent; border-radius:8px; overflow:hidden; cursor:pointer;
@@ -206,7 +227,7 @@
 <body>
 
 <header>
-  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v1.6</span></h1>
+  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.0</span></h1>
   <button class="btn" id="importBtn">📂 استيراد فيديو</button>
   <button class="btn" id="newBtn" title="مشروع جديد — مسح الكل">🆕</button>
   <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi,.wmv,.flv,.mpg,.mpeg,.3gp,.3g2,.ts,.m2ts,.mts,.vob,.ogv,.divx,.asf,.rm,.rmvb" hidden>
@@ -254,6 +275,7 @@
     <button class="btn" id="splitBtn" disabled title="تقسيم عند المؤشر (S)">✂ قص</button>
     <button class="btn" id="copyBtn"  disabled title="نسخ المقطع المحدد (C)">⧉ نسخ</button>
     <button class="btn danger" id="delBtn" disabled title="حذف المقطع المحدد (Delete)">🗑 حذف</button>
+    <button class="btn" id="addLayerBtn" title="إضافة طبقة فيديو جديدة">➕ طبقة</button>
   </div>
   <div class="zoomCtl">🔍 تكبير <input type="range" id="zoom" min="0" max="100" value="70"></div>
 </div>
@@ -305,13 +327,16 @@ const player = document.getElementById('player');
 let sources = [];          // {url, duration, thumbs:[], isBlob}  — كل فيديو مستورد
 let activeSrc = -1, srcSwapping = false;
 let clips = [];            // {id, src, in, out}  (src = رقم المصدر)
-let selectedId = null;
+
 let pxPerSec = 80;
 let zoomVal = 70;          // 0..100 على مقياس لوغاريتمي
 let playing = false;
 let timelineTime = 0;      // الزمن الحالي على التايملاين
 let nextId = 1;
+let overlays = [];         // طبقات فيديو إضافية: {id, clips:[{id,src,in,out,start,audioOff}]}
+let sel = null;            // الاختيار الموحد: {kind:'main'|'ov', tid, cid}
 const projectLoaded = ()=> sources.length>0;
+const selMainClip = ()=> sel&&sel.kind==='main' ? clips.find(c=>c.id===sel.cid) : null;
 
 const $ = id => document.getElementById(id);
 const ruler=$('ruler'), track=$('track'), inner=$('timelineInner'),
@@ -530,8 +555,17 @@ async function loadVideo(file, allowConvert=true){
 function addSourceReady(url, dur, isBlob){
   const idx=sources.length;
   sources.push({url, duration:dur, thumbs:[], isBlob});
+  if(ovImportTarget){                        // استيراد موجّه لطبقة أوفرلاي
+    const t=ovImportTarget; ovImportTarget=null;
+    $('dropHint').classList.add('hidden'); showErr('');
+    ['playBtn','splitBtn','copyBtn','delBtn','exportBtn'].forEach(id=>$(id).disabled=false);
+    if(activeSrc<0) switchSrc(idx, ()=>{});
+    addOverlayClip(t, idx);
+    makeThumbnails(idx);
+    return;
+  }
   clips.push({id:nextId++, src:idx, in:0, out:dur});
-  selectedId=clips[clips.length-1].id;
+  sel={kind:'main', cid:clips[clips.length-1].id};
   $('dropHint').classList.add('hidden'); showErr('');
   ['playBtn','splitBtn','copyBtn','delBtn','exportBtn'].forEach(id=>$(id).disabled=false);
   if(idx===0){ switchSrc(0, ()=>seekTimeline(0)); }
@@ -553,7 +587,7 @@ function switchSrc(i, then){
 // 🆕 مشروع جديد — مسح كل شيء
 function resetProject(){
   sources.forEach(s=>{ if(s.isBlob) try{URL.revokeObjectURL(s.url);}catch(e){} });
-  sources=[]; clips=[]; activeSrc=-1; selectedId=null; timelineTime=0;
+  sources=[]; clips=[]; overlays=[]; activeSrc=-1; sel=null; timelineTime=0;
   stopPlay(); player.removeAttribute('src'); player.load();
   ['playBtn','splitBtn','copyBtn','delBtn','exportBtn'].forEach(id=>$(id).disabled=true);
   $('dropHint').classList.remove('hidden');
@@ -600,14 +634,14 @@ function calcPps(){
 }
 function render(){
   pxPerSec = calcPps();
-  const dur = Math.max(totalDuration(), 1);
+  const dur = Math.max(totalDuration(), overlayEnd(), 1);
   const width = Math.max(area.clientWidth, dur*pxPerSec + 120);
   inner.style.width = width+'px';
 
   // المسطرة — خطوة تكيفية من نصف ثانية حتى ساعة حسب الزوم
   ruler.innerHTML='';
   const stepsList=[0.5,1,2,5,10,15,30,60,120,300,600,900,1800,3600];
-  const stepSec = stepsList.find(s=>s*pxPerSec>=70) || 3600;
+  const stepSec = stepsList.find(st=>st*pxPerSec>=70) || 3600;
   for(let t=0;t<=dur+stepSec;t+=stepSec){
     const d=document.createElement('div');
     d.className='tick'; d.style.left=(t*pxPerSec)+'px';
@@ -615,49 +649,147 @@ function render(){
     ruler.appendChild(d);
   }
 
-  // المقاطع
   track.innerHTML='';
+
+  /* ===== طبقة الفيديو الرئيسية V1 ===== */
+  const laneV=document.createElement('div'); laneV.className='lane';
+  laneV.innerHTML='<span class="laneTag">🎬 V1</span>';
   clips.forEach((c,i)=>{
     const st=clipStartTime(i), d=c.out-c.in;
     const S=sources[c.src];
     const el=document.createElement('div');
-    el.className='clip'+(c.id===selectedId?' selected':'');
+    el.className='clip'+(sel&&sel.kind==='main'&&sel.cid===c.id?' selected':'');
     el.style.left=(st*pxPerSec)+'px';
     el.style.width=Math.max(6, d*pxPerSec)+'px';
-    el.dataset.id=c.id;
 
-    // صور مصغرة ضمن مدى المقطع (من مصدر هذا المقطع)
     const tw=document.createElement('div'); tw.className='thumbs';
     (S?.thumbs||[]).filter(th=>th.t>=c.in-1 && th.t<=c.out+1).forEach(th=>{
       const img=document.createElement('img'); img.src=th.url; tw.appendChild(img);
     });
     el.appendChild(tw);
-
     const lb=document.createElement('div'); lb.className='label';
-    lb.textContent = (sources.length>1 ? '🎞'+(c.src+1)+' · ' : '') + fmt(d);
+    lb.textContent=(sources.length>1?'🎞'+(c.src+1)+' · ':'')+fmt(d);
     el.appendChild(lb);
-
     const hl=document.createElement('div'); hl.className='handle left';
     const hr=document.createElement('div'); hr.className='handle right';
     el.appendChild(hl); el.appendChild(hr);
 
     el.addEventListener('pointerdown', e=>{
-      selectedId=c.id; render();
-      if(e.target.classList.contains('handle')){
+      sel={kind:'main', cid:c.id}; render();
+      if(e.target.classList.contains('handle'))
         startTrim(c, e.target.classList.contains('left')?'in':'out', e);
-      }
     });
     el.addEventListener('click', e=>{
       if(e.target.classList.contains('handle')) return;
-      selectedId=c.id;
+      sel={kind:'main', cid:c.id};
       seekTimeline(clipStartTime(clips.indexOf(c)) + 0.001);
       render();
     });
-    track.appendChild(el);
+    laneV.appendChild(el);
+  });
+  track.appendChild(laneV);
+
+  /* ===== طبقة صوت V1 (بلوك لكل مقطع — اضغطه لكتم/تشغيل صوته) ===== */
+  const laneA=document.createElement('div'); laneA.className='lane audio';
+  laneA.innerHTML='<span class="laneTag">🔊 A1</span>';
+  clips.forEach((c,i)=>{
+    const st=clipStartTime(i), d=c.out-c.in;
+    const a=document.createElement('div');
+    a.className='aclip'+(c.audioOff?' muted':'');
+    a.style.left=(st*pxPerSec)+'px';
+    a.style.width=Math.max(6, d*pxPerSec)+'px';
+    a.textContent=c.audioOff?'🔇 مكتوم':'♪ صوت';
+    a.title='اضغط لكتم/تشغيل صوت هذا المقطع';
+    a.onclick=()=>{ c.audioOff=!c.audioOff; applyAudioGains(); render(); };
+    laneA.appendChild(a);
+  });
+  track.appendChild(laneA);
+
+  /* ===== طبقات الأوفرلاي (V2, V3, …) وصوت كل منها ===== */
+  overlays.forEach((tr,ti)=>{
+    const lv=document.createElement('div'); lv.className='lane';
+    const tag=document.createElement('span'); tag.className='laneTag';
+    tag.innerHTML='🎬 V'+(ti+2)+' ';
+    const addB=document.createElement('button'); addB.textContent='➕'; addB.title='أضف فيديو لهذه الطبقة عند المؤشر';
+    addB.onclick=e=>{ e.stopPropagation(); ovImportTarget=tr.id; $('fileInput').click(); };
+    const delB=document.createElement('button'); delB.textContent='✖'; delB.title='حذف الطبقة كلها';
+    delB.onclick=e=>{ e.stopPropagation(); overlays=overlays.filter(x=>x!==tr); syncOverlays(timelineTime,false); render(); };
+    tag.appendChild(addB); tag.appendChild(delB);
+    lv.appendChild(tag);
+
+    tr.clips.forEach(c=>{
+      const d=c.out-c.in;
+      const el=document.createElement('div');
+      el.className='ovclip'+(sel&&sel.kind==='ov'&&sel.tid===tr.id&&sel.cid===c.id?' selected':'');
+      el.style.left=(c.start*pxPerSec)+'px';
+      el.style.width=Math.max(6,d*pxPerSec)+'px';
+      const lb=document.createElement('div'); lb.className='label';
+      lb.textContent='🎞'+(c.src+1)+' · '+fmt(d);
+      el.appendChild(lb);
+      const hl=document.createElement('div'); hl.className='handle left';
+      const hr=document.createElement('div'); hr.className='handle right';
+      el.appendChild(hl); el.appendChild(hr);
+
+      el.addEventListener('pointerdown', e=>{
+        sel={kind:'ov', tid:tr.id, cid:c.id}; render();
+        if(e.target.classList.contains('handle'))
+          startOvTrim(c, e.target.classList.contains('left')?'in':'out', e);
+        else startOvMove(c, e);
+      });
+      lv.appendChild(el);
+    });
+    track.appendChild(lv);
+
+    const la=document.createElement('div'); la.className='lane audio';
+    la.innerHTML='<span class="laneTag">🔊 A'+(ti+2)+'</span>';
+    tr.clips.forEach(c=>{
+      const d=c.out-c.in;
+      const a=document.createElement('div');
+      a.className='aclip'+(c.audioOff?' muted':'');
+      a.style.left=(c.start*pxPerSec)+'px';
+      a.style.width=Math.max(6,d*pxPerSec)+'px';
+      a.textContent=c.audioOff?'🔇':'♪';
+      a.onclick=()=>{ c.audioOff=!c.audioOff; applyAudioGains(); render(); };
+      la.appendChild(a);
+    });
+    track.appendChild(la);
   });
 
   playhead.style.left = (timelineTime*pxPerSec)+'px';
-  $('timeLabel').textContent = fmt(timelineTime)+' / '+fmt(totalDuration());
+  $('timeLabel').textContent = fmt(timelineTime)+' / '+fmt(Math.max(totalDuration(),overlayEnd()));
+}
+
+// نهاية آخر مقطع أوفرلاي (قد يتجاوز طول V1)
+function overlayEnd(){
+  let m=0;
+  overlays.forEach(tr=>tr.clips.forEach(c=>{ m=Math.max(m, c.start+(c.out-c.in)); }));
+  return m;
+}
+
+/* ===== سحب وقص مقاطع الأوفرلاي ===== */
+function startOvMove(clip,e){
+  e.preventDefault();
+  try{ e.target.setPointerCapture(e.pointerId); }catch(err){}
+  const sx=e.clientX, orig=clip.start;
+  const mv=ev=>{ clip.start=Math.max(0, orig+(ev.clientX-sx)/pxPerSec); render(); };
+  const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); window.removeEventListener('pointercancel',up); syncOverlays(timelineTime,playing); };
+  window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); window.addEventListener('pointercancel',up);
+}
+function startOvTrim(clip,edge,e){
+  e.preventDefault(); e.stopPropagation();
+  try{ e.target.setPointerCapture(e.pointerId); }catch(err){}
+  const sx=e.clientX, oi=clip.in, oo=clip.out, os=clip.start;
+  const maxOut=sources[clip.src]?sources[clip.src].duration:oo;
+  const mv=ev=>{
+    const dx=(ev.clientX-sx)/pxPerSec;
+    if(edge==='in'){
+      const ni=Math.min(Math.max(0,oi+dx), clip.out-0.1);
+      clip.start=os+(ni-oi); clip.in=ni;
+    }else clip.out=Math.max(Math.min(maxOut,oo+dx), clip.in+0.1);
+    render();
+  };
+  const up=()=>{ window.removeEventListener('pointermove',mv); window.removeEventListener('pointerup',up); window.removeEventListener('pointercancel',up); };
+  window.addEventListener('pointermove',mv); window.addEventListener('pointerup',up); window.addEventListener('pointercancel',up);
 }
 
 /* ============ القص من الأطراف (Trim) ============ */
@@ -693,6 +825,7 @@ function seekTimeline(t){
     if(hit.clip.src !== activeSrc) switchSrc(hit.clip.src, ()=>{ player.currentTime = tv; });
     else player.currentTime = tv;
   }
+  syncOverlays(t, playing);
   render();
 }
 ruler.addEventListener('pointerdown', e=>{
@@ -709,6 +842,109 @@ ruler.addEventListener('pointerdown', e=>{
   window.addEventListener('pointerup',up);
   window.addEventListener('pointercancel',up);
 });
+
+
+/* ============ 🎬 محرك الطبقات والصوت ============ */
+let ovImportTarget=null;               // الطبقة الهدف عند الاستيراد من زر ➕ الخاص بها
+const ovEls=new Map();                 // عنصر فيديو مخفي لكل طبقة أوفرلاي
+function ovEl(tr){
+  if(!ovEls.has(tr.id)){
+    const v=document.createElement('video');
+    v.playsInline=true; v.style.display='none';
+    document.body.appendChild(v);
+    v._srcIdx=-1; v._active=null;
+    ovEls.set(tr.id, v);
+  }
+  return ovEls.get(tr.id);
+}
+function addOverlayTrack(){
+  overlays.push({id:'ov'+(nextId++), clips:[]});
+  render();
+}
+function addOverlayClip(trackId, srcIdx){
+  const tr=overlays.find(t=>t.id===trackId); if(!tr) return;
+  const S=sources[srcIdx];
+  tr.clips.push({id:nextId++, src:srcIdx, in:0, out:S.duration, start:timelineTime, audioOff:false});
+  sel={kind:'ov', tid:tr.id, cid:tr.clips[tr.clips.length-1].id};
+  render(); syncOverlays(timelineTime, playing);
+}
+
+// مزامنة عناصر الأوفرلاي مع زمن التايملاين
+function syncOverlays(t, playFlag){
+  overlays.forEach(tr=>{
+    const el=ovEl(tr);
+    const c=tr.clips.find(c=> t>=c.start-0.02 && t < c.start+(c.out-c.in));
+    if(!c){ if(!el.paused) el.pause(); el._active=null; return; }
+    const S=sources[c.src];
+    if(el._srcIdx!==c.src){
+      el._srcIdx=c.src;
+      el.crossOrigin=S.isBlob?null:'anonymous';
+      el.src=S.url; el.load();
+      hookAudio(el);
+    }
+    el._active=c;
+    const want=c.in+(t-c.start);
+    if(playFlag){
+      if(el.paused){ try{el.currentTime=want;}catch(e){} el.play().catch(()=>{}); }
+      else if(Math.abs(el.currentTime-want)>0.5){ try{el.currentTime=want;}catch(e){} }
+    }else{
+      if(!el.paused) el.pause();
+      if(Math.abs(el.currentTime-want)>0.15){ try{el.currentTime=want;}catch(e){} }
+    }
+  });
+  applyAudioGains();
+}
+
+// رسم طبقات الأوفرلاي فوق الفيديو الأساسي (نافذة PiP)
+function drawOverlays(ctx,w,h){
+  overlays.forEach(tr=>{
+    const el=ovEls.get(tr.id);
+    if(!el || !el._active || el.readyState<2) return;
+    const ar=(el.videoHeight&&el.videoWidth)?el.videoHeight/el.videoWidth:9/16;
+    const ow=w*0.45, oh=ow*ar;
+    const x=w-ow-w*0.03, y=h-oh-h*0.05;
+    ctx.save();
+    ctx.drawImage(el,x,y,ow,oh);
+    ctx.lineWidth=Math.max(2,w*0.003); ctx.strokeStyle='rgba(255,255,255,.85)';
+    ctx.strokeRect(x,y,ow,oh);
+    ctx.restore();
+  });
+}
+
+/* ===== خلاط الصوت (WebAudio) — كتم لكل مقطع + مزج للتصدير ===== */
+let actx=null, mixDest=null;
+const gainMap=new Map();
+function initAudioGraph(){
+  if(actx) return;
+  try{
+    actx=new (window.AudioContext||window.webkitAudioContext)();
+    mixDest=actx.createMediaStreamDestination();
+    hookAudio(player);
+    ovEls.forEach(el=>hookAudio(el));
+  }catch(e){ console.warn('audio graph failed', e); }
+}
+function hookAudio(el){
+  if(!actx || gainMap.has(el)) return;
+  try{
+    const srcN=actx.createMediaElementSource(el);
+    const g=actx.createGain();
+    srcN.connect(g); g.connect(actx.destination); g.connect(mixDest);
+    gainMap.set(el,g);
+  }catch(e){ /* عنصر عبر CORS بدون سماح — صوته يبقى مباشراً */ }
+}
+function setGain(el,v){
+  const g=gainMap.get(el);
+  if(g) g.gain.value=v;
+  else el.muted = (v===0);
+}
+function applyAudioGains(){
+  const hit=clipAt(timelineTime);
+  setGain(player, hit&&hit.clip.audioOff ? 0 : 1);
+  overlays.forEach(tr=>{
+    const el=ovEls.get(tr.id);
+    if(el) setGain(el, el._active&&!el._active.audioOff ? 1 : 0);
+  });
+}
 
 /* ============ التشغيل ============ */
 function tick(){
@@ -731,19 +967,24 @@ function tick(){
       }
     } else { stopPlay(); seekTimeline(0); return; }
   }
+  syncOverlays(timelineTime, true);
   playhead.style.left=(timelineTime*pxPerSec)+'px';
-  $('timeLabel').textContent = fmt(timelineTime)+' / '+fmt(totalDuration());
+  $('timeLabel').textContent = fmt(timelineTime)+' / '+fmt(Math.max(totalDuration(),overlayEnd()));
   requestAnimationFrame(tick);
 }
 function startPlay(){
   if(!clips.length) return;
   if(timelineTime >= totalDuration()-0.05) seekTimeline(0);
   playing=true; $('playBtn').textContent='⏸ إيقاف';
+  initAudioGraph();
+  if(actx && actx.state==='suspended') actx.resume();
+  applyAudioGains();
   if(!srcSwapping) player.play();
   requestAnimationFrame(tick);
 }
 function stopPlay(){
   playing=false; $('playBtn').textContent='▶ تشغيل'; player.pause();
+  syncOverlays(timelineTime, false);
 }
 $('playBtn').onclick = ()=> playing?stopPlay():startPlay();
 
@@ -754,30 +995,36 @@ function splitAtPlayhead(){
   const {clip,index,local} = hit;
   if(local<0.1 || local>(clip.out-clip.in)-0.1) return; // قريب جداً من الطرف
   const cut = clip.in + local;
-  const right = {id:nextId++, src:clip.src, in:cut, out:clip.out};
+  const right = {id:nextId++, src:clip.src, in:cut, out:clip.out, audioOff:clip.audioOff};
   clip.out = cut;
   clips.splice(index+1,0,right);
-  selectedId = right.id;
+  sel = {kind:'main', cid:right.id};
   render();
 }
 function copySelected(){
-  const i = clips.findIndex(c=>c.id===selectedId);
-  if(i<0) return;
-  const c = clips[i];
-  clips.splice(i+1,0,{id:nextId++, src:c.src, in:c.in, out:c.out});
+  const c = selMainClip(); if(!c) return;
+  const i = clips.indexOf(c);
+  clips.splice(i+1,0,{id:nextId++, src:c.src, in:c.in, out:c.out, audioOff:c.audioOff});
   render();
 }
 function deleteSelected(){
-  const i = clips.findIndex(c=>c.id===selectedId);
-  if(i<0) return;
+  if(sel && sel.kind==='ov'){                 // حذف مقطع أوفرلاي
+    const tr=overlays.find(t=>t.id===sel.tid);
+    if(tr){ tr.clips=tr.clips.filter(c=>c.id!==sel.cid); }
+    sel=null; syncOverlays(timelineTime,playing); render();
+    return;
+  }
+  const c = selMainClip(); if(!c) return;
+  const i = clips.indexOf(c);
   clips.splice(i,1);
-  selectedId = clips[Math.min(i,clips.length-1)]?.id ?? null;
+  sel = clips.length ? {kind:'main', cid:clips[Math.min(i,clips.length-1)].id} : null;
   seekTimeline(Math.min(timelineTime, totalDuration()));
   render();
 }
 $('splitBtn').onclick=splitAtPlayhead;
 $('copyBtn').onclick=copySelected;
 $('delBtn').onclick=deleteSelected;
+$('addLayerBtn').onclick=addOverlayTrack;
 
 $('zoom').oninput = e=>{ zoomVal=+e.target.value; render(); };
 
@@ -799,9 +1046,10 @@ $('exportBtn').onclick = async ()=>{
   $('exportOverlay').classList.add('show');
   const dur = totalDuration();
 
-  const anyFx = plugins.some(p=>p.enabled);
+  const anyFx = plugins.some(p=>p.enabled) || overlays.some(t=>t.clips.length>0) || clips.some(c=>c.audioOff);
   const canDirect = !!(player.captureStream || player.mozCaptureStream);
-  const useCanvas = anyFx || !canDirect;   // سفاري/آيفون قد لا يدعم captureStream للفيديو — نستخدم الكانفس
+  const useCanvas = anyFx || !canDirect;
+  initAudioGraph();   // سفاري/آيفون قد لا يدعم captureStream للفيديو — نستخدم الكانفس
   let stream, fxTimer=null;
 
   if(useCanvas){
@@ -826,7 +1074,8 @@ $('exportBtn').onclick = async ()=>{
     drawFrame();
     const vTracks=cv.captureStream(30).getVideoTracks();
     let aTracks=[];
-    if(canDirect){
+    if(mixDest) aTracks=mixDest.stream.getAudioTracks();        // الخلاط: كل الطبقات + الكتم
+    else if(canDirect){
       const src=player.captureStream ? player.captureStream() : player.mozCaptureStream();
       aTracks=src.getAudioTracks();
     }
@@ -1309,6 +1558,7 @@ function drawBaseComposite(ctx,w,h,forExport){
     ctx.drawImage(player,0,0,w,h);
     if(CTX_FILTER_OK) ctx.filter='none';
   }
+  drawOverlays(ctx,w,h);
   ctx.restore();
   if(!CTX_FILTER_OK && forExport) applyFilterApprox(ctx,w,h);  // بديل الآيفون في التصدير
   drawColorGrade(ctx,w,h);
@@ -1317,7 +1567,7 @@ function drawBaseComposite(ctx,w,h,forExport){
   drawGlitch(ctx,w,h);          // الجلتش آخر طبقة — يشوّه كل ما تحته
 }
 // هل نحتاج الرسم عبر الكانفس بدل عرض الفيديو مباشرة؟
-const needsCanvasBase = ()=> plugins.some(p=>p.enabled && (p.type==='base'||p.type==='transform'||p.type==='color'||p.type==='post'||p.type==='person'));
+const needsCanvasBase = ()=> overlays.some(t=>t.clips.length>0) || plugins.some(p=>p.enabled && (p.type==='base'||p.type==='transform'||p.type==='color'||p.type==='post'||p.type==='person'));
 
 function drawHeart(ctx,x,y,s,color,rot){
   ctx.save();
