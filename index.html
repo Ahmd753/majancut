@@ -233,7 +233,7 @@
 <body>
 
 <header>
-  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.4</span></h1>
+  <h1>ماجان<b>كَت</b> ✂️ <span id="ver" style="font-size:.62rem;color:var(--dim);font-weight:400">v2.5</span></h1>
   <button class="btn" id="importBtn">📂 استيراد فيديو</button>
   <button class="btn" id="newBtn" title="مشروع جديد — مسح الكل">🆕</button>
   <input type="file" id="fileInput" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi,.wmv,.flv,.mpg,.mpeg,.3gp,.3g2,.ts,.m2ts,.mts,.vob,.ogv,.divx,.asf,.rm,.rmvb" hidden>
@@ -1405,20 +1405,41 @@ function setSegStatus(s){
   renderPlugins();
 }
 
-// النموذج مدمج داخل ملفات الموقع (./mediapipe/) — لا يحتاج أي سيرفر خارجي
+// محركان مدمجان: TensorFlow.js (WebGL — الأوسع توافقاً) ثم MediaPipe كبديل
 function loadScript(src){
   return new Promise((res,rej)=>{
     const sc=document.createElement('script');
-    sc.src=src; sc.onload=res; sc.onerror=()=>rej(new Error('load'));
+    sc.src=src; sc.onload=res; sc.onerror=()=>rej(new Error('load '+src));
     document.head.appendChild(sc);
-    setTimeout(()=>rej(new Error('timeout')), 20000);
+    setTimeout(()=>rej(new Error('timeout')), 25000);
   });
 }
+let segEngine='';            // 'tf' أو 'mp'
+let tfModel=null;
+const tfMaskCv=document.createElement('canvas'); tfMaskCv.width=256; tfMaskCv.height=256;
+const tfMaskCtx=tfMaskCv.getContext('2d');
+const tfMaskImg=new ImageData(256,256);
+
 async function ensureSegModel(quiet){
-  if(segModel || segLoadState==='loading') return;
+  if(segModel || tfModel || segLoadState==='loading') return;
   segLoadState='loading';
   if(!quiet) setSegStatus('⏳ جاري تجهيز محرك تحديد الشخص…');
-  // المسار المدمج أولاً، ثم CDN كخطة بديلة (للنسخة المحمّلة كملف)
+
+  // 1) المحرك الجديد TF.js
+  try{
+    if(typeof tf==='undefined') await loadScript('./tf/tf.min.js');
+    try{ await tf.setBackend('webgl'); }catch(e){ await tf.setBackend('cpu'); }
+    await tf.ready();
+    tfModel=await tf.loadGraphModel('./tf/selfie/selfie.json');
+    // تسخين
+    tf.tidy(()=>{ tfModel.execute(tf.zeros([1,256,256,3])); });
+    segEngine='tf'; segLoadState='ready';
+    setSegStatus('✅ محرك تحديد الشخص جاهز ('+tf.getBackend()+')');
+    setTimeout(()=>setSegStatus(''), 2500);
+    return;
+  }catch(e){ tfModel=null; _segLastErr='tf: '+((e&&e.message)||e); }
+
+  // 2) البديل: MediaPipe المدمج ثم CDN
   const bases=['./mediapipe/','https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/'];
   for(const base of bases){
     try{
@@ -1428,14 +1449,34 @@ async function ensureSegModel(quiet){
       segModel.setOptions({modelSelection:1});
       segModel.onResults(r=>{ segMask=r.segmentationMask; segBusy=false; lastMaskAt=performance.now(); if(segWarned){segWarned=false; setSegStatus('');} });
       await segModel.initialize();
-      segLoadState='ready';
-      setSegStatus('✅ محرك تحديد الشخص جاهز');
+      segEngine='mp'; segLoadState='ready';
+      setSegStatus('✅ محرك تحديد الشخص جاهز (mp)');
       setTimeout(()=>setSegStatus(''), 2500);
       return;
-    }catch(e){ segModel=null; _segLastErr=(e&&e.message)||String(e); }
+    }catch(e){ segModel=null; _segLastErr='mp: '+((e&&e.message)||e); }
   }
   segLoadState='idle';
-  setSegStatus('❌ تعذّر تجهيز المحرك ('+(_segLastErr||'?')+') — أعد تحميل الصفحة أو جرّب Chrome');
+  setSegStatus('❌ تعذّر تجهيز المحرك ('+(_segLastErr||'?')+') — أعد تحميل الصفحة');
+}
+
+// استدلال TF.js: إطار → ماسك شخص 256×256
+async function tfSegment(){
+  const out=tf.tidy(()=>{
+    const img=tf.browser.fromPixels(segSend)
+      .resizeBilinear([256,256]).toFloat().div(255).expandDims(0);
+    return tfModel.execute(img).squeeze();     // [256,256] احتمال الشخص
+  });
+  const data=await out.data();
+  out.dispose();
+  const px=tfMaskImg.data;
+  for(let i=0;i<65536;i++){
+    const v=Math.max(0,Math.min(255, data[i]*255));
+    const o=i*4; px[o]=255; px[o+1]=255; px[o+2]=255; px[o+3]=v;
+  }
+  tfMaskCtx.putImageData(tfMaskImg,0,0);
+  segMask=tfMaskCv;
+  lastMaskAt=performance.now();
+  if(segWarned){segWarned=false; setSegStatus('');}
 }
 // تجهيز مسبق صامت عند فتح البرنامج — يكون جاهزاً قبل ما تحتاجه
 setTimeout(()=>{ try{ ensureSegModel(true); }catch(e){} }, 2000);
@@ -1443,7 +1484,7 @@ setTimeout(()=>{ try{ ensureSegModel(true); }catch(e){} }, 2000);
 const segSend=document.createElement('canvas'), segSendCtx=segSend.getContext('2d');
 let lastMaskAt=0, segWarned=false;
 function segTick(){
-  if(!segModel || segBusy || player.readyState<2 || !player.videoWidth) return;
+  if((!segModel&&!tfModel) || segBusy || player.readyState<2 || !player.videoWidth) return;
   const now=performance.now();
   if(now-lastSegSend < 66) return; // ~15 إطاراً في الثانية للتقطيع (يكفي وسلس)
   lastSegSend=now; segBusy=true;
@@ -1451,7 +1492,11 @@ function segTick(){
   const sw=256, sh=Math.max(2, Math.round(sw*player.videoHeight/player.videoWidth));
   segSend.width=sw; segSend.height=sh;
   try{ segSendCtx.drawImage(player,0,0,sw,sh); }catch(e){ segBusy=false; return; }
-  segModel.send({image:segSend}).catch(()=>{ segBusy=false; });
+  if(segEngine==='tf' && tfModel){
+    tfSegment().then(()=>{segBusy=false;}).catch(e=>{ segBusy=false; _segLastErr='tfrun: '+e.message; });
+  } else if(segModel){
+    segModel.send({image:segSend}).catch(()=>{ segBusy=false; });
+  } else segBusy=false;
   if(_segFirstTry===0) _segFirstTry=now;
   // مراقب: لو المحرك شغال بس الماسك مش بيوصل — قول للمستخدم بصراحة
   if(!segWarned && segLoadState==='ready' && lastMaskAt===0 && now-_segFirstTry>5000){
@@ -1466,7 +1511,7 @@ async function segSelfTest(){
   if(!projectLoaded() || player.readyState<2){ setSegStatus('⚠️ استورد فيديو أولاً وحرّك المؤشر لإطار فيه شخص'); return; }
   setSegStatus('🧪 جاري الاختبار…');
   await ensureSegModel();
-  if(!segModel){ return; }   // ensureSegModel كتب سبب الفشل
+  if(!segModel && !tfModel){ return; }   // ensureSegModel كتب سبب الفشل
   segMask=null; segBusy=false; lastSegSend=0;
   const t0=performance.now();
   segTick();
